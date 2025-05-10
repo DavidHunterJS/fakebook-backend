@@ -1,0 +1,2250 @@
+// src/controllers/post.controller.ts
+import { Request, Response } from 'express';
+import { validationResult } from 'express-validator';
+import mongoose from 'mongoose';
+import fs from 'fs';
+import path from 'path';
+import Post, { PostVisibility } from '../models/Post';
+import User from '../models/User';
+import Comment from '../models/Comment';
+import { Permission } from '../config/roles';
+import { NotificationService } from '../services/notification.service';
+import { IUser } from '../types/user.types'; // Adjust path
+interface PaginationQuery { page?: string; limit?: string; }
+
+// Import or define transformUserImageUrls helper
+// This helper MUST be available in this file's scope
+// Example placeholder definition:
+const getFileUrl = (filename: string | undefined | null, type: string): string => {
+    if (!filename) return '';
+    const baseUrl = process.env.BASE_URL || 'http://localhost:5000';
+    const pathSegment = type === 'cover' ? 'covers' : type === 'post' ? 'posts' : type;
+    return `${baseUrl}/uploads/${pathSegment}/${filename}`;
+};
+const transformUserImageUrls = (user: any): any => {
+  if (!user || typeof user === 'string') return user;
+  const userData = typeof user.toObject === 'function' ? user.toObject() : { ...user };
+  return {
+    ...userData,
+    profilePicture: getFileUrl(userData.profilePicture, 'profile'),
+    coverPhoto: getFileUrl(userData.coverPhoto, 'cover'),
+  };
+};
+// Types for request parameters and query
+interface PostIdParam {
+  id: string;
+}
+
+interface CommentIdParam {
+  commentId: string;
+}
+
+interface UserIdParam {
+  userId: string;
+}
+
+interface PaginationQuery {
+  page?: string;
+  limit?: string;
+}
+
+// Create interfaces for your route parameters
+interface PostIdParam {
+  postId: string;
+}
+
+/**
+ * @route   POST api/posts
+ * @desc    Create a new post
+ * @access  Private
+ */
+export const createPost = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      // Clean up uploaded files if validation fails
+      if (req.files && Array.isArray(req.files)) {
+        req.files.forEach(file => {
+          fs.unlinkSync(file.path);
+        });
+      }
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { text, visibility = 'public' } = req.body;
+
+    // Ensure there is either text or media
+    if (!text && (!req.files || (Array.isArray(req.files) && req.files.length === 0))) {
+      return res.status(400).json({ message: 'Post must contain text or media' });
+    }
+
+    // Create new post
+    const newPost = new Post({
+      user: req.user.id,
+      text: text || '',
+      visibility
+    });
+
+    // Add media files if they exist
+    if (req.files && Array.isArray(req.files)) {
+      newPost.media = req.files.map(file => file.filename);
+    }
+
+    await newPost.save();
+
+    // Populate user data for response
+    const populatedPost = await Post.findById(newPost._id)
+      .populate('user', 'username firstName lastName profilePicture')
+      .populate('likes', 'username firstName lastName profilePicture');
+
+    return res.status(201).json(populatedPost);
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   GET api/posts (or api/posts/feed)
+ * @desc    Get all posts for feed
+ * @access  Private
+ */
+export const getFeedPosts = async (
+  req: Request<{}, {}, {}, PaginationQuery>,
+  res: Response
+): Promise<Response> => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+    const userId = req.user.id;
+
+    const page = parseInt(req.query.page || '1');
+    const limit = parseInt(req.query.limit || '10');
+    const skip = (page - 1) * limit;
+
+    const currentUser = await User.findById(userId).select('friends blockedUsers savedPosts').lean();
+    if (!currentUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const usersWhoBlockedMe = await User.find({ blockedUsers: userId }).select('_id').lean();
+    const excludedUserIds = [
+      ...(currentUser.blockedUsers || []).map(id => new mongoose.Types.ObjectId(id.toString())),
+      ...usersWhoBlockedMe.map(user => user._id),
+    ];
+
+    const friendObjectIds = (currentUser.friends || []).map(id => new mongoose.Types.ObjectId(id.toString()));
+    const query = {
+      $or: [
+        { user: new mongoose.Types.ObjectId(userId) },
+        {
+          user: { $in: friendObjectIds, $nin: excludedUserIds },
+          visibility: { $in: ['public', 'friends'] }
+        },
+        {
+          user: { $nin: [...friendObjectIds, new mongoose.Types.ObjectId(userId), ...excludedUserIds] },
+          visibility: 'public'
+        }
+      ]
+    };
+
+    // Fetch posts, selecting necessary fields including 'media'
+    const posts = await Post.find(query)
+      .populate<{ user: IUser }>('user', 'username firstName lastName profilePicture') // Populate user details needed
+      .select('text user likes comments createdAt media visibility') // Ensure media is selected
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(); // Use lean for performance
+
+    const total = await Post.countDocuments(query);
+
+    // Add engagement data and transform user image URLs
+    const postsWithEngagement = await Promise.all(
+      posts.map(async (post) => { // 'post' here is already a plain JS object because of .lean()
+        const likesCount = post.likes?.length ?? 0;
+        const commentsCount = await Comment.countDocuments({ post: post._id });
+        const isLiked = (post.likes || []).some(like => like?.toString() === userId);
+        const isSaved = (currentUser.savedPosts || []).some(savedId => savedId?.toString() === post._id.toString());
+
+        // Transform the populated user object within the post
+        const transformedUser = post.user ? transformUserImageUrls(post.user) : null;
+
+        // --- CORRECTION HERE ---
+        // Directly spread the 'post' object (which is already lean)
+        // and ensure all needed fields are carried over.
+        return {
+          _id: post._id, // Ensure essential fields are present
+          text: post.text,
+          user: transformedUser, // Use the transformed user
+          likes: post.likes,
+          comments: post.comments, // Or maybe just commentsCount is needed?
+          createdAt: post.createdAt,
+          media: post.media, // Explicitly include media from the lean post object
+          visibility: post.visibility,
+          // Add calculated fields
+          likesCount,
+          commentsCount,
+          isLiked,
+          isSaved
+        };
+        // --- END CORRECTION ---
+      })
+    );
+
+    // Optional: Log just before sending to confirm 'media' is present
+    console.log('[getFeedPosts] Data being sent to frontend:', JSON.stringify(postsWithEngagement, null, 2));
+
+    return res.json({
+      posts: postsWithEngagement,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (err) {
+    console.error('Error in getFeedPosts:', (err as Error).message, (err as Error).stack);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   GET api/posts/user/:userId
+ * @desc    Get posts by user
+ * @access  Private
+ */
+export const getUserPosts = async (
+  req: Request<UserIdParam, {}, {}, PaginationQuery>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { userId } = req.params;
+    const page = parseInt(req.query.page || '1');
+    const limit = parseInt(req.query.limit || '10');
+    const skip = (page - 1) * limit;
+
+    // Check if user exists
+    const targetUser = await User.findById(userId);
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if user is blocked or has blocked current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === userId);
+    const hasBlocked = targetUser.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot view posts from this user' });
+    }
+
+    // Determine which posts are visible based on relationship
+    let visibilityFilter: any = { visibility: 'public' };
+
+    // If viewing own posts, show all
+    if (userId === req.user.id) {
+      visibilityFilter = {};
+    } 
+    // If viewing friend's posts, show public and friends-only
+    else if (currentUser.friends.some(id => id.toString() === userId)) {
+      visibilityFilter = { visibility: { $in: ['public', 'friends'] } };
+    }
+    // Otherwise, only public posts are visible
+
+    const posts = await Post.find({ 
+      user: userId,
+      ...visibilityFilter 
+    })
+      .populate('user', 'username firstName lastName profilePicture')
+      .sort({ pinned: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Post.countDocuments({ 
+      user: userId,
+      ...visibilityFilter 
+    });
+
+    // Add engagement data
+    const postsWithEngagement = await Promise.all(
+      posts.map(async (post) => {
+        const likesCount = post.likes.length;
+        const commentsCount = await Comment.countDocuments({ post: post._id });
+        const isLiked = post.likes.some(like => 
+          like instanceof mongoose.Types.ObjectId 
+            ? like.toString() === req.user!.id 
+            : like === req.user!.id
+        );
+        const isSaved = currentUser.savedPosts?.includes(post._id as any) || false;
+
+        const postObject = post.toObject();
+        return {
+          ...postObject,
+          likesCount,
+          commentsCount,
+          isLiked,
+          isSaved
+        };
+      })
+    );
+
+    return res.json({
+      posts: postsWithEngagement,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   GET api/posts/:id
+ * @desc    Get post by ID
+ * @access  Private
+ */
+export const getPostById = async (
+  req: Request<PostIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const post = await Post.findById(req.params.id)
+      .populate('user', 'username firstName lastName profilePicture')
+      .populate('tags', 'username firstName lastName profilePicture');
+
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if the user can see this post
+    const postOwner = await User.findById(post.user);
+    if (!postOwner) {
+      return res.status(404).json({ message: 'Post owner not found' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Check if either user has blocked the other
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot view this post' });
+    }
+
+    // Check post visibility
+    const isOwner = post.user._id.toString() === req.user.id;
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id);
+
+    if (!isOwner && post.visibility === 'private') {
+      return res.status(403).json({ message: 'This post is private' });
+    }
+
+    if (!isOwner && post.visibility === 'friends' && !isFriend) {
+      return res.status(403).json({ message: 'This post is only visible to friends' });
+    }
+
+    // Get comments count and like status
+    const commentsCount = await Comment.countDocuments({ post: post._id });
+    const isLiked = post.likes.some(like => 
+      like instanceof mongoose.Types.ObjectId 
+        ? like.toString() === req.user!.id 
+        : like === req.user!.id
+    );
+    const isSaved = currentUser.savedPosts?.includes(post._id as any) || false;
+
+    const postObject = post.toObject();
+    const postWithEngagement = {
+      ...postObject,
+      likesCount: post.likes.length,
+      commentsCount,
+      isLiked,
+      isSaved
+    };
+
+    return res.json(postWithEngagement);
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   PUT api/posts/:id
+ * @desc    Update a post
+ * @access  Private
+ */
+export const updatePost = async (
+  req: Request<PostIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { text, visibility } = req.body;
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user is authorized to update post
+    if (post.user.toString() !== req.user.id) {
+      // Check if the user has the permission to edit any post
+      const currentUser = await User.findById(req.user.id);
+      if (!currentUser || !currentUser.permissions?.includes(Permission.EDIT_ANY_POST)) {
+        return res.status(403).json({ message: 'Not authorized to edit this post' });
+      }
+    }
+
+    // Update post fields
+    if (text !== undefined) post.text = text;
+    if (visibility) post.visibility = visibility as PostVisibility;
+
+    await post.save();
+
+    // Return updated post
+    const updatedPost = await Post.findById(post._id)
+      .populate('user', 'username firstName lastName profilePicture')
+      .populate('tags', 'username firstName lastName profilePicture');
+
+    return res.json(updatedPost);
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   DELETE api/posts/:id
+ * @desc    Delete a post
+ * @access  Private
+ */
+export const deletePost = async (
+  req: Request<PostIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user is authorized to delete post
+    if (post.user.toString() !== req.user.id) {
+      // Check if the user has the permission to delete any post
+      const currentUser = await User.findById(req.user.id);
+      if (!currentUser || !currentUser.permissions?.includes(Permission.DELETE_ANY_POST)) {
+        return res.status(403).json({ message: 'Not authorized to delete this post' });
+      }
+    }
+
+    // Delete associated media files
+    if (post.media && post.media.length > 0) {
+      post.media.forEach(filename => {
+        const filePath = path.join(__dirname, '../../uploads/posts', filename);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      });
+    }
+
+    // Delete associated comments
+    await Comment.deleteMany({ post: post._id });
+
+    // Delete post
+    await post.deleteOne();
+
+    // Remove from saved posts for all users
+    await User.updateMany(
+      { savedPosts: post._id },
+      { $pull: { savedPosts: post._id } }
+    );
+
+    return res.json({ message: 'Post deleted' });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   POST api/posts/:id/like
+ * @desc    Like a post
+ * @access  Private
+ */
+export const likePost = async (
+  req: Request<PostIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user!.id;
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user can see this post (same visibility rules as viewing)
+    const postOwner = await User.findById(post.user);
+    if (!postOwner) {
+      return res.status(404).json({ message: 'Post owner not found' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Check if either user has blocked the other
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot interact with this post' });
+    }
+
+    // Check post visibility
+    const isOwner = post.user.toString() === req.user.id;
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+
+    if (!isOwner && post.visibility === 'private') {
+      return res.status(403).json({ message: 'This post is private' });
+    }
+
+    if (!isOwner && post.visibility === 'friends' && !isFriend) {
+      return res.status(403).json({ message: 'This post is only visible to friends' });
+    }
+
+    // Check if post is already liked
+    if (post.likes.some(like => like.toString() === req.user!.id)) {
+      return res.status(400).json({ message: 'Post already liked' });
+    }
+
+    // Add like
+    post.likes.push(req.user.id);
+    await post.save();
+        // Send notification if you're not liking your own post
+        if (post.user.toString() !== userId) {
+          await NotificationService.postLike(userId, post.user.toString(), postId);
+        }
+    return res.json({ message: 'Post liked', likes: post.likes.length });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   DELETE api/posts/:id/like
+ * @desc    Unlike a post
+ * @access  Private
+ */
+export const unlikePost = async (
+  req: Request<PostIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if post is liked
+    if (!post.likes.some(like => like.toString() === req.user!.id)) {
+      return res.status(400).json({ message: 'Post not liked yet' });
+    }
+
+    // Remove like
+    post.likes = post.likes.filter(
+      like => like.toString() !== req.user!.id
+    );
+    await post.save();
+
+    return res.json({ message: 'Post unliked', likes: post.likes.length });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   GET api/posts/:id/likes
+ * @desc    Get users who liked a post
+ * @access  Private
+ */
+export const getPostLikes = async (
+  req: Request<PostIdParam, {}, {}, PaginationQuery>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const page = parseInt(req.query.page || '1');
+    const limit = parseInt(req.query.limit || '10');
+    const skip = (page - 1) * limit;
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user can see this post (same visibility rules as viewing)
+    const postOwner = await User.findById(post.user);
+    if (!postOwner) {
+      return res.status(404).json({ message: 'Post owner not found' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Check if either user has blocked the other
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot view this post' });
+    }
+
+    // Check post visibility
+    const isOwner = post.user.toString() === req.user.id;
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+
+    if (!isOwner && post.visibility === 'private') {
+      return res.status(403).json({ message: 'This post is private' });
+    }
+
+    if (!isOwner && post.visibility === 'friends' && !isFriend) {
+      return res.status(403).json({ message: 'This post is only visible to friends' });
+    }
+
+    // Get users who liked the post, excluding blocked users
+    const likeUserIds = post.likes.map(like => 
+      like instanceof mongoose.Types.ObjectId ? like : new mongoose.Types.ObjectId(like.toString())
+    );
+    
+    const blockedUserIds = [
+      ...currentUser.blockedUsers.map(id => 
+        id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(id.toString())
+      ),
+      ...(await User.find({ blockedUsers: req.user.id }).select('_id')).map(user => user._id)
+    ];
+
+    const users = await User.find({
+      _id: { $in: likeUserIds, $nin: blockedUserIds }
+    })
+      .select('username firstName lastName profilePicture')
+      .skip(skip)
+      .limit(limit);
+
+    const total = await User.countDocuments({
+      _id: { $in: likeUserIds, $nin: blockedUserIds }
+    });
+
+    return res.json({
+      users,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   POST api/posts/:id/comment
+ * @desc    Add a comment to a post
+ * @access  Private
+ */
+export const addComment = async (
+  req: Request<PostIdParam, {}, { text: string }>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { text } = req.body;
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user can see this post (same visibility rules as viewing)
+    const postOwner = await User.findById(post.user);
+    if (!postOwner) {
+      return res.status(404).json({ message: 'Post owner not found' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Check if either user has blocked the other
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot interact with this post' });
+    }
+
+    // Check post visibility
+    const isOwner = post.user.toString() === req.user.id;
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+
+    if (!isOwner && post.visibility === 'private') {
+      return res.status(403).json({ message: 'This post is private' });
+    }
+
+    if (!isOwner && post.visibility === 'friends' && !isFriend) {
+      return res.status(403).json({ message: 'This post is only visible to friends' });
+    }
+
+    // Create new comment
+    const newComment = new Comment({
+      user: req.user.id,
+      post: post._id,
+      text
+    });
+
+    const savedComment = await newComment.save();
+
+    // Populate user data for response
+    const populatedComment = await Comment.findById(savedComment._id)
+      .populate('user', 'username firstName lastName profilePicture');
+
+    return res.status(201).json(populatedComment);
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   GET api/posts/:id/comments
+ * @desc    Get comments for a post
+ * @access  Private
+ */
+export const getPostComments = async (
+  req: Request<PostIdParam, {}, {}, PaginationQuery>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const page = parseInt(req.query.page || '1');
+    const limit = parseInt(req.query.limit || '10');
+    const skip = (page - 1) * limit;
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user can see this post (same visibility rules as viewing)
+    const postOwner = await User.findById(post.user);
+    if (!postOwner) {
+      return res.status(404).json({ message: 'Post owner not found' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Check if either user has blocked the other
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot view this post' });
+    }
+
+    // Check post visibility
+    const isOwner = post.user.toString() === req.user.id;
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+
+    if (!isOwner && post.visibility === 'private') {
+      return res.status(403).json({ message: 'This post is private' });
+    }
+
+    if (!isOwner && post.visibility === 'friends' && !isFriend) {
+      return res.status(403).json({ message: 'This post is only visible to friends' });
+    }
+
+// Get blocked users to filter out comments
+let blockedUserIds: mongoose.Types.ObjectId[] = [];
+
+// Add user's own blocked users
+if (currentUser.blockedUsers && currentUser.blockedUsers.length > 0) {
+  const validBlockedIds = currentUser.blockedUsers.map(id => {
+    try {
+      return new mongoose.Types.ObjectId(id.toString());
+    } catch (error) {
+      console.warn(`Invalid ID format in blockedUsers: ${id}`);
+      return null;
+    }
+  }).filter((id): id is mongoose.Types.ObjectId => id !== null);
+  
+  blockedUserIds = [...validBlockedIds];
+}
+
+// Add users who have blocked the current user
+try {
+  const usersWhoBlockedMe = await User.find({ 
+    blockedUsers: req.user.id 
+  }).select('_id');
+  
+  blockedUserIds = [
+    ...blockedUserIds,
+    ...usersWhoBlockedMe.map(user => user._id)
+  ];
+} catch (error) {
+  console.error("Error finding users who blocked the current user:", error);
+}
+
+    // Get comments for the post
+    const comments = await Comment.find({
+      post: post._id,
+      user: { $nin: blockedUserIds }
+    })
+      .populate('user', 'username firstName lastName profilePicture')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Comment.countDocuments({
+      post: post._id,
+      user: { $nin: blockedUserIds }
+    });
+
+    // Add additional data for each comment
+    const commentsWithData = comments.map(comment => {
+      const isLiked = comment.likes.some(like => 
+        like instanceof mongoose.Types.ObjectId 
+          ? like.toString() === req.user!.id 
+          : like === req.user!.id
+      );
+      
+      const commentObj = comment.toObject();
+      return {
+        ...commentObj,
+        likesCount: comment.likes.length,
+        repliesCount: comment.replies.length,
+        isLiked
+      };
+    });
+
+    return res.json({
+      comments: commentsWithData,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   PUT api/posts/comment/:commentId
+ * @desc    Update a comment
+ * @access  Private
+ */
+export const updateComment = async (
+  req: Request<CommentIdParam, {}, { text: string }>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { text } = req.body;
+
+    // Find comment
+    const comment = await Comment.findById(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ message: 'Comment not found' });
+    }
+
+    // Check if user is authorized to update comment
+    if (comment.user.toString() !== req.user.id) {
+      // Check if the user has the permission to edit any comment
+      const currentUser = await User.findById(req.user.id);
+      if (!currentUser || !currentUser.permissions?.includes(Permission.EDIT_ANY_POST)) {
+        return res.status(403).json({ message: 'Not authorized to edit this comment' });
+      }
+    }
+
+    // Update comment
+    comment.text = text;
+    await comment.save();
+
+    // Return updated comment
+    const updatedComment = await Comment.findById(comment._id)
+      .populate('user', 'username firstName lastName profilePicture');
+
+    return res.json(updatedComment);
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   DELETE api/posts/comment/:commentId
+ * @desc    Delete a comment
+ * @access  Private
+ */
+export const deleteComment = async (
+  req: Request<CommentIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Find comment
+    const comment = await Comment.findById(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ message: 'Comment not found' });
+    }
+
+    // Find associated post
+    const post = await Post.findById(comment.post);
+    if (!post) {
+      return res.status(404).json({ message: 'Associated post not found' });
+    }
+
+    // Check if user is authorized to delete comment
+    const isCommentOwner = comment.user.toString() === req.user.id;
+    const isPostOwner = post.user.toString() === req.user.id;
+    const isModerator = await User.exists({
+      _id: req.user.id,
+      permissions: { $in: [Permission.DELETE_ANY_POST] }
+    });
+
+    if (!isCommentOwner && !isPostOwner && !isModerator) {
+      return res.status(403).json({ message: 'Not authorized to delete this comment' });
+    }
+
+    // Delete comment
+    await comment.deleteOne();
+
+    return res.json({ message: 'Comment deleted' });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   POST api/posts/comment/:commentId/like
+ * @desc    Like a comment
+ * @access  Private
+ */
+export const likeComment = async (
+  req: Request<CommentIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Find comment
+    const comment = await Comment.findById(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ message: 'Comment not found' });
+    }
+
+    // Check if comment is already liked
+    if (comment.likes.some(like => like.toString() === req.user!.id)) {
+      return res.status(400).json({ message: 'Comment already liked' });
+    }
+
+    // Find post to check visibility
+    const post = await Post.findById(comment.post);
+    if (!post) {
+      return res.status(404).json({ message: 'Associated post not found' });
+    }
+
+    // Check if user can interact with this post (same visibility rules as viewing)
+    const postOwner = await User.findById(post.user);
+    if (!postOwner) {
+      return res.status(404).json({ message: 'Post owner not found' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Check if either user has blocked the other
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot interact with this post' });
+    }
+
+    // Check post visibility
+    const isOwner = post.user.toString() === req.user.id;
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+
+    if (!isOwner && post.visibility === 'private') {
+      return res.status(403).json({ message: 'This post is private' });
+    }
+
+    if (!isOwner && post.visibility === 'friends' && !isFriend) {
+      return res.status(403).json({ message: 'This post is only visible to friends' });
+    }
+
+    // Add like
+    comment.likes.push(req.user.id);
+    await comment.save();
+
+    return res.json({ message: 'Comment liked', likes: comment.likes.length });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   DELETE api/posts/comment/:commentId/like
+ * @desc    Unlike a comment
+ * @access  Private
+ */
+export const unlikeComment = async (
+  req: Request<CommentIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Find comment
+    const comment = await Comment.findById(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ message: 'Comment not found' });
+    }
+
+    // Check if comment is liked
+    if (!comment.likes.some(like => like.toString() === req.user!.id)) {
+      return res.status(400).json({ message: 'Comment not liked yet' });
+    }
+
+    // Remove like
+    comment.likes = comment.likes.filter(
+      like => like.toString() !== req.user!.id
+    );
+    await comment.save();
+
+    return res.json({ message: 'Comment unliked', likes: comment.likes.length });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   POST api/posts/:id/share
+ * @desc    Share a post
+ * @access  Private
+ */
+export const sharePost = async (
+  req: Request<PostIdParam, {}, { text?: string, visibility?: PostVisibility }>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { text, visibility = 'public' } = req.body;
+
+    // Find original post
+    const originalPost = await Post.findById(req.params.id)
+      .populate('user', 'username firstName lastName profilePicture');
+    
+    if (!originalPost) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user can see this post (same visibility rules as viewing)
+    const postOwner = await User.findById(originalPost.user);
+    if (!postOwner) {
+      return res.status(404).json({ message: 'Post owner not found' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Check if either user has blocked the other
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot share this post' });
+    }
+
+    // Check original post visibility
+    const isOwner = originalPost.user._id.toString() === req.user.id;
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+
+    if (!isOwner && originalPost.visibility === 'private') {
+      return res.status(403).json({ message: 'This post is private and cannot be shared' });
+    }
+
+    if (!isOwner && originalPost.visibility === 'friends' && !isFriend) {
+      return res.status(403).json({ message: 'This post is only visible to friends and cannot be shared' });
+    }
+
+    // Create new post (the share)
+    const newPost = new Post({
+      user: req.user.id,
+      text: text || '',
+      visibility,
+      originalPost: originalPost._id,
+      sharedFrom: originalPost.user._id
+    });
+
+    await newPost.save();
+
+    // Add share to original post
+    originalPost.shares.push({
+      user: req.user.id,
+      date: new Date()
+    });
+    await originalPost.save();
+
+    // Populate user data for response
+    const populatedPost = await Post.findById(newPost._id)
+      .populate('user', 'username firstName lastName profilePicture')
+      .populate('originalPost')
+      .populate('sharedFrom', 'username firstName lastName profilePicture');
+
+    return res.status(201).json(populatedPost);
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   POST api/posts/:id/report
+ * @desc    Report a post
+ * @access  Private
+ */
+export const reportPost = async (
+  req: Request<PostIdParam, {}, { reason: string }>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { reason } = req.body;
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user already reported
+    if (post.reportReasons.some(report => report.user.toString() === req.user!.id)) {
+      return res.status(400).json({ message: 'You have already reported this post' });
+    }
+
+    // Add report
+    post.reportReasons.push({
+      user: req.user.id,
+      reason,
+      date: new Date()
+    });
+
+    // Mark as reported
+    post.reported = true;
+
+    await post.save();
+
+    return res.json({ message: 'Post reported successfully' });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   POST api/posts/comment/:commentId/report
+ * @desc    Report a comment
+ * @access  Private
+ */
+export const reportComment = async (
+  req: Request<CommentIdParam, {}, { reason: string }>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { reason } = req.body;
+
+    // Find comment
+    const comment = await Comment.findById(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ message: 'Comment not found' });
+    }
+
+    // Check if user already reported
+    if (comment.reportReasons?.some(report => report.user.toString() === req.user!.id)) {
+      return res.status(400).json({ message: 'You have already reported this comment' });
+    }
+
+    // Initialize reportReasons if it doesn't exist
+    if (!comment.reportReasons) {
+      comment.reportReasons = [];
+    }
+
+    // Add report
+    comment.reportReasons.push({
+      user: req.user.id,
+      reason,
+      date: new Date()
+    });
+
+    // Mark as reported
+    comment.reported = true;
+
+    await comment.save();
+
+    return res.json({ message: 'Comment reported successfully' });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   GET api/posts/saved
+ * @desc    Get saved posts
+ * @access  Private
+ */
+export const getSavedPosts = async (
+  req: Request<{}, {}, {}, PaginationQuery>,
+  res: Response
+): Promise<Response> => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const page = parseInt(req.query.page || '1');
+    const limit = parseInt(req.query.limit || '10');
+    const skip = (page - 1) * limit;
+
+    // Get current user with savedPosts
+    const currentUser = await User.findById(req.user.id).select('savedPosts blockedUsers');
+    if (!currentUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!currentUser.savedPosts || currentUser.savedPosts.length === 0) {
+      return res.json({
+        posts: [],
+        pagination: {
+          total: 0,
+          page,
+          pages: 0
+        }
+      });
+    }
+
+    // Get blocked users
+    const blockedUserIds = currentUser.blockedUsers.map(id => 
+      id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(id.toString())
+    );
+    const usersWhoBlockedMe = await User.find({ blockedUsers: req.user.id }).select('_id');
+    const excludedUsers = [
+      ...blockedUserIds,
+      ...usersWhoBlockedMe.map(user => user._id)
+    ];
+
+    // Get saved posts
+    const savedPostIds = currentUser.savedPosts.map(id => 
+      id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(id)
+    );
+
+    const posts = await Post.find({
+      _id: { $in: savedPostIds },
+      user: { $nin: excludedUsers }
+    })
+      .populate('user', 'username firstName lastName profilePicture')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Post.countDocuments({
+      _id: { $in: savedPostIds },
+      user: { $nin: excludedUsers }
+    });
+
+    // Add engagement data
+    const postsWithEngagement = await Promise.all(
+      posts.map(async (post) => {
+        const likesCount = post.likes.length;
+        const commentsCount = await Comment.countDocuments({ post: post._id });
+        const isLiked = post.likes.some(like => 
+          like instanceof mongoose.Types.ObjectId 
+            ? like.toString() === req.user!.id 
+            : like === req.user!.id
+        );
+
+        const postObject = post.toObject();
+        return {
+          ...postObject,
+          likesCount,
+          commentsCount,
+          isLiked,
+          isSaved: true
+        };
+      })
+    );
+
+    return res.json({
+      posts: postsWithEngagement,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   POST api/posts/:id/save
+ * @desc    Save a post
+ * @access  Private
+ */
+export const savePost = async (
+  req: Request<PostIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user can see this post (same visibility rules as viewing)
+    const postOwner = await User.findById(post.user);
+    if (!postOwner) {
+      return res.status(404).json({ message: 'Post owner not found' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Check if either user has blocked the other
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot interact with this post' });
+    }
+
+    // Check post visibility
+    const isOwner = post.user.toString() === req.user.id;
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+
+    if (!isOwner && post.visibility === 'private') {
+      return res.status(403).json({ message: 'This post is private' });
+    }
+
+    if (!isOwner && post.visibility === 'friends' && !isFriend) {
+      return res.status(403).json({ message: 'This post is only visible to friends' });
+    }
+
+    // Initialize savedPosts if it doesn't exist
+    if (!currentUser.savedPosts) {
+      currentUser.savedPosts = [];
+    }
+
+    // Check if already saved
+    if (currentUser.savedPosts.some(id => id.toString() === post.id)) {
+      return res.status(400).json({ message: 'Post already saved' });
+    }
+
+    // Save post
+    currentUser.savedPosts.push(post._id);
+    await currentUser.save();
+
+    return res.json({ message: 'Post saved successfully' });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   DELETE api/posts/:id/save
+ * @desc    Unsave a post
+ * @access  Private
+ */
+export const unsavePost = async (
+  req: Request<PostIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if post is saved
+    if (!currentUser.savedPosts || !currentUser.savedPosts.some(id => id.toString() === req.params.id)) {
+      return res.status(400).json({ message: 'Post not saved' });
+    }
+
+    // Remove post from saved posts
+    currentUser.savedPosts = currentUser.savedPosts.filter(
+      id => id.toString() !== req.params.id
+    );
+    await currentUser.save();
+
+    return res.json({ message: 'Post removed from saved' });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   GET api/posts/trending
+ * @desc    Get trending posts
+ * @access  Private
+ */
+export const getTrendingPosts = async (
+  req: Request<{}, {}, {}, PaginationQuery>,
+  res: Response
+): Promise<Response> => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const page = parseInt(req.query.page || '1');
+    const limit = parseInt(req.query.limit || '10');
+    const skip = (page - 1) * limit;
+
+    // Get current user to check blocked users
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Get blocked users to exclude from results
+    const blockedUserIds = currentUser.blockedUsers.map(id => 
+      id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(id.toString())
+    );
+    const usersWhoBlockedMe = await User.find({ blockedUsers: req.user.id }).select('_id');
+    const excludedUsers = [
+      ...blockedUserIds,
+      ...usersWhoBlockedMe.map(user => user._id)
+    ];
+
+    // Calculate trending score based on recent engagement
+    // Trending = (likes + comments * 2 + shares * 3) / (hours since post + 2)^1.5
+    const now = new Date();
+    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000); // 3 days ago
+
+    // Only include public posts from the last 3 days
+    const recentPosts = await Post.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: threeDaysAgo },
+          visibility: 'public',
+          user: { $nin: excludedUsers }
+        }
+      },
+      {
+        $addFields: {
+          likesCount: { $size: '$likes' },
+          sharesCount: { $size: '$shares' },
+          hoursSincePost: {
+            $divide: [
+              { $subtract: [now, '$createdAt'] },
+              3600000 // milliseconds in an hour
+            ]
+          }
+        }
+      },
+      {
+        $lookup: {
+          from: 'comments',
+          localField: '_id',
+          foreignField: 'post',
+          as: 'comments'
+        }
+      },
+      {
+        $addFields: {
+          commentsCount: { $size: '$comments' },
+          // Trending score formula
+          trendingScore: {
+            $divide: [
+              {
+                $add: [
+                  { $size: '$likes' },
+                  { $multiply: [{ $size: '$comments' }, 2] },
+                  { $multiply: [{ $size: '$shares' }, 3] }
+                ]
+              },
+              {
+                $pow: [
+                  {
+                    $add: [
+                      {
+                        $divide: [
+                          { $subtract: [now, '$createdAt'] },
+                          3600000 // milliseconds in an hour
+                        ]
+                      },
+                      2 // Prevent division by very small numbers
+                    ]
+                  },
+                  1.5 // Power to decrease score faster as time passes
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        $sort: { trendingScore: -1 }
+      },
+      {
+        $skip: skip
+      },
+      {
+        $limit: limit
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'userInfo'
+        }
+      },
+      {
+        $unwind: '$userInfo'
+      },
+      {
+        $project: {
+          _id: 1,
+          text: 1,
+          media: 1,
+          visibility: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          likesCount: 1,
+          commentsCount: 1,
+          sharesCount: 1,
+          trendingScore: 1,
+          user: {
+            _id: '$userInfo._id',
+            username: '$userInfo.username',
+            firstName: '$userInfo.firstName',
+            lastName: '$userInfo.lastName',
+            profilePicture: '$userInfo.profilePicture'
+          },
+          // Check if current user liked the post
+          isLiked: {
+            $in: [
+              new mongoose.Types.ObjectId(req.user.id),
+              '$likes'
+            ]
+          },
+          // Check if current user saved the post
+          isSaved: {
+            $in: [
+              '$_id',
+              {
+                $ifNull: [
+                  { $map: { input: currentUser.savedPosts, as: 'sp', in: '$$sp' } },
+                  []
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ]);
+
+    // Count total trending posts
+    const total = await Post.countDocuments({
+      createdAt: { $gte: threeDaysAgo },
+      visibility: 'public',
+      user: { $nin: excludedUsers }
+    });
+
+    return res.json({
+      posts: recentPosts,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   POST api/posts/comment/:commentId/reply
+ * @desc    Reply to a comment
+ * @access  Private
+ */
+export const replyToComment = async (
+  req: Request<CommentIdParam, {}, { text: string }>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { text } = req.body;
+
+    // Find comment
+    const comment = await Comment.findById(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ message: 'Comment not found' });
+    }
+
+    // Find post to check visibility
+    const post = await Post.findById(comment.post);
+    if (!post) {
+      return res.status(404).json({ message: 'Associated post not found' });
+    }
+
+    // Check if user can interact with this post (same visibility rules as viewing)
+    const postOwner = await User.findById(post.user);
+    if (!postOwner) {
+      return res.status(404).json({ message: 'Post owner not found' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Check if either user has blocked the other
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot interact with this post' });
+    }
+
+    // Check post visibility
+    const isOwner = post.user.toString() === req.user.id;
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+
+    if (!isOwner && post.visibility === 'private') {
+      return res.status(403).json({ message: 'This post is private' });
+    }
+
+    if (!isOwner && post.visibility === 'friends' && !isFriend) {
+      return res.status(403).json({ message: 'This post is only visible to friends' });
+    }
+
+    // Add reply to comment
+    const newReply = {
+      user: req.user.id,
+      text,
+      likes: []
+    };
+
+    comment.replies.push({
+        user: req.user.id,
+        text,
+        likes: []
+      } as any);
+    await comment.save();
+
+    // Get the added reply with user info
+    const updatedComment = await Comment.findById(comment._id)
+      .populate('user', 'username firstName lastName profilePicture')
+      .populate('replies.user', 'username firstName lastName profilePicture');
+
+    const addedReply = updatedComment?.replies[updatedComment.replies.length - 1];
+
+    return res.status(201).json(addedReply);
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   GET api/posts/comment/:commentId/replies
+ * @desc    Get replies to a comment
+ * @access  Private
+ */
+export const getCommentReplies = async (
+  req: Request<CommentIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Find comment
+    const comment = await Comment.findById(req.params.commentId)
+      .populate('replies.user', 'username firstName lastName profilePicture');
+    
+    if (!comment) {
+      return res.status(404).json({ message: 'Comment not found' });
+    }
+
+    // Find post to check visibility
+    const post = await Post.findById(comment.post);
+    if (!post) {
+      return res.status(404).json({ message: 'Associated post not found' });
+    }
+
+    // Check if user can see this post (same visibility rules as viewing)
+    const postOwner = await User.findById(post.user);
+    if (!postOwner) {
+      return res.status(404).json({ message: 'Post owner not found' });
+    }
+
+    // Get current user
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Check if either user has blocked the other
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+
+    if (isBlocked || hasBlocked) {
+      return res.status(403).json({ message: 'Cannot view this post' });
+    }
+
+    // Check post visibility
+    const isOwner = post.user.toString() === req.user.id;
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+
+    if (!isOwner && post.visibility === 'private') {
+      return res.status(403).json({ message: 'This post is private' });
+    }
+
+    if (!isOwner && post.visibility === 'friends' && !isFriend) {
+      return res.status(403).json({ message: 'This post is only visible to friends' });
+    }
+
+    // Add additional data for each reply
+    const repliesWithData = comment.replies.map(reply => {
+      const isLiked = reply.likes.some(like => 
+        like instanceof mongoose.Types.ObjectId 
+          ? like.toString() === req.user!.id 
+          : like === req.user!.id
+      );
+      
+      const replyObj = reply.toObject();
+      return {
+        ...replyObj,
+        likesCount: reply.likes.length,
+        isLiked
+      };
+    });
+
+    return res.json(repliesWithData);
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   GET api/posts/admin/reported
+ * @desc    Get reported posts (admin only)
+ * @access  Private/Admin
+ */
+export const getReportedPosts = async (
+  req: Request<{}, {}, {}, PaginationQuery>,
+  res: Response
+): Promise<Response> => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const page = parseInt(req.query.page || '1');
+    const limit = parseInt(req.query.limit || '10');
+    const skip = (page - 1) * limit;
+
+    // Check if user has permission to access reported posts
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser || !currentUser.permissions?.includes(Permission.EDIT_ANY_POST)) {
+      return res.status(403).json({ message: 'Not authorized to view reported posts' });
+    }
+
+    // Get reported posts
+    const reportedPosts = await Post.find({ reported: true })
+      .populate('user', 'username firstName lastName profilePicture email')
+      .populate('reportReasons.user', 'username firstName lastName')
+      .sort({ 'reportReasons.length': -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Post.countDocuments({ reported: true });
+
+    return res.json({
+      posts: reportedPosts,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   POST api/posts/:id/pin
+ * @desc    Pin post to profile
+ * @access  Private
+ */
+export const pinPost = async (
+  req: Request<PostIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user owns the post
+    if (post.user.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Can only pin your own posts' });
+    }
+
+    // Unpin any currently pinned posts
+    await Post.updateMany(
+      { user: req.user.id, pinned: true },
+      { $set: { pinned: false } }
+    );
+
+    // Pin the selected post
+    post.pinned = true;
+    await post.save();
+
+    return res.json({ message: 'Post pinned to profile' });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   DELETE api/posts/:id/pin
+ * @desc    Unpin post from profile
+ * @access  Private
+ */
+export const unpinPost = async (
+  req: Request<PostIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user owns the post
+    if (post.user.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Can only unpin your own posts' });
+    }
+
+    // Check if post is pinned
+    if (!post.pinned) {
+      return res.status(400).json({ message: 'Post is not pinned' });
+    }
+
+    // Unpin the post
+    post.pinned = false;
+    await post.save();
+
+    return res.json({ message: 'Post unpinned from profile' });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   POST api/posts/:id/tag
+ * @desc    Tag users in a post
+ * @access  Private
+ */
+export const tagUsers = async (
+  req: Request<PostIdParam, {}, { userIds: string[] }>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { userIds } = req.body;
+
+    // Find post
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user owns the post
+    if (post.user.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Can only tag users in your own posts' });
+    }
+
+    // Check if users exist and are not blocked
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Get blocked users
+    const blockedUserIds = currentUser.blockedUsers.map(id => id.toString());
+    const usersWhoBlockedMe = await User.find({ blockedUsers: req.user.id }).select('_id');
+    const excludedUserIds = [
+      ...blockedUserIds,
+      ...usersWhoBlockedMe.map(user => user._id.toString())
+    ];
+
+    // Filter out invalid user IDs
+    const validUserIds = [];
+    for (const userId of userIds) {
+      // Skip if user is already tagged
+      if (post.tags.some(tag => tag.toString() === userId)) {
+        continue;
+      }
+
+      // Skip if user is blocked or has blocked current user
+      if (excludedUserIds.includes(userId)) {
+        continue;
+      }
+
+      // Check if user exists
+      const userExists = await User.exists({ _id: userId });
+      if (userExists) {
+        validUserIds.push(userId);
+      }
+    }
+
+    // Add valid users to tags
+    // Map with explicit type casting
+    post.tags.push(...validUserIds.map(id => {
+        const objectId = new mongoose.Types.ObjectId(id);
+        return objectId as any; // Cast each ObjectId
+    }));
+    await post.save();
+
+    // Get updated post with tags
+    const updatedPost = await Post.findById(post._id)
+      .populate('tags', 'username firstName lastName profilePicture');
+
+    return res.json({
+      message: 'Users tagged in post',
+      tags: updatedPost?.tags
+    });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
+
+/**
+ * @route   DELETE api/posts/:id/tag/:userId
+ * @desc    Remove user tag from post
+ * @access  Private
+ */
+export const removeUserTag = async (
+  req: Request<PostIdParam & UserIdParam>,
+  res: Response
+): Promise<Response> => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { id: postId, userId } = req.params;
+
+    // Find post
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user owns the post or is the tagged user
+    const isPostOwner = post.user.toString() === req.user.id;
+    const isTaggedUser = userId === req.user.id;
+
+    if (!isPostOwner && !isTaggedUser) {
+      return res.status(403).json({ message: 'Not authorized to remove this tag' });
+    }
+
+    // Remove tag if it exists
+    if (!post.tags.some(tag => tag.toString() === userId)) {
+      return res.status(400).json({ message: 'User is not tagged in this post' });
+    }
+
+    post.tags = post.tags.filter(tag => tag.toString() !== userId);
+    await post.save();
+
+    return res.json({ message: 'Tag removed successfully' });
+  } catch (err) {
+    console.error((err as Error).message);
+    return res.status(500).send('Server error');
+  }
+};
