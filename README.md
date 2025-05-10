@@ -1,8 +1,3 @@
-cd path/to/your/backend
-echo "# Your Project Backend
-
-This is the backend API for Your Project.
-
 ## Getting Started
 
 ### Prerequisites
