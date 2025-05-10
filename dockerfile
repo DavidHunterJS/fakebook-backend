@@ -1,26 +1,20 @@
 FROM node:18-alpine
 
-WORKDIR /app
+WORKDIR /usr/src/app
 
 # Copy package files
 COPY package*.json ./
 
-# Install ALL dependencies - explicitly NOT using --only=production
+# Install ALL dependencies (including TypeScript)
 RUN npm install
+
+# Install required TypeScript type definitions
+RUN npm install --save-dev @types/express @types/jsonwebtoken @types/bcryptjs @types/nodemailer @types/multer
 
 # Copy source code
 COPY . .
 
-# Make sure node_modules/.bin is in PATH
-# This is crucial for npm scripts to find local binaries like tsc
-ENV PATH="/app/node_modules/.bin:${PATH}"
-
-# Verify TypeScript is installed and PATH is set correctly
-RUN echo "PATH = $PATH" && \
-    which tsc || echo "tsc not in PATH" && \
-    ls -la node_modules/.bin/tsc || echo "tsc not found in node_modules/.bin" 
-
-# Build the application with the enhanced PATH
+# Build the application
 RUN npm run build
 
 # Prune development dependencies for smaller image
