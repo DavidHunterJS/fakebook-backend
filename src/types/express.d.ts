@@ -1,19 +1,22 @@
-// src/types/express.d.ts
-import { Express } from 'express-serve-static-core';
+import { Express, Request, Response, NextFunction } from 'express-serve-static-core';
 import { IUser } from '../models/User';
 
 declare global {
   namespace Express {
+    // Extend Request with your user property
     interface Request {
       user?: IUser;
     }
   }
 }
 
-
-// This allows route handlers to return Response objects
+// More permissive RequestHandler definition
 declare module 'express-serve-static-core' {
   interface RequestHandler {
-    (req: Request, res: Response, next: NextFunction): void | Response | Promise<void> | Promise<Response>;
+    (req: any, res: any, next?: any): any;
+  }
+  
+  interface ErrorRequestHandler {
+    (err: any, req: any, res: any, next: any): any;
   }
 }
