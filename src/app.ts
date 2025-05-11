@@ -53,6 +53,11 @@ console.log('Express will serve static files for /uploads from absolute path:', 
 app.use('/uploads', express.static(staticUploadsPath));
 // ---------------------------
 
+// Root route handler
+app.get('/', (req: Request, res: Response) => {
+  res.json({ message: 'Fakebook API is running' });
+});
+
 // Define API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -64,6 +69,14 @@ app.use('/api/admin', adminRoutes);
 
 // Socket.io connection
 socketHandler(io);
+
+// Catch-all route handler (must be placed after all other routes)
+app.use('*', (req: Request, res: Response) => {
+  res.status(404).json({ 
+    message: 'Route not found', 
+    path: req.originalUrl 
+  });
+});
 
 // Error handler - Should typically be defined AFTER all routes
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
