@@ -24,11 +24,16 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
-const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+// Support multiple origins
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',') 
+  : [process.env.CLIENT_URL || 'http://localhost:3000'];
+
+console.log('Allowed Origins:', allowedOrigins);
 
 const io = new SocketIOServer(server, {
   cors: {
-    origin: clientUrl,
+    origin: allowedOrigins,
     methods: ['GET', 'POST']
   }
 });
@@ -39,18 +44,23 @@ connectDB();
 // Init Middleware
 app.use(express.json());
 app.use(cors({
-  origin: clientUrl,
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, Postman)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));
 
 // --- Static File Serving ---
-// This path should resolve to /home/lazer/repos/fakebook/backend/uploads/
-// This assumes your compiled server.js is one level inside the 'backend' folder
-// (e.g., in backend/dist/ or backend/src/ if running ts-node from backend/)
-// and your 'uploads' folder is also a direct child of 'backend'.
 const staticUploadsPath = path.join(__dirname, '../uploads');
-console.log('Express will serve static files for /uploads from absolute path:', staticUploadsPath); // This log uses the correct variable
+console.log('Express will serve static files for /uploads from absolute path:', staticUploadsPath);
 app.use('/uploads', express.static(staticUploadsPath));
 // ---------------------------
 
@@ -92,10 +102,7 @@ const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  // --- CORRECTED LOG ---
-  // This log now uses the same path variable as express.static for clarity and accuracy
   console.log('Confirmed static /uploads serving from:', staticUploadsPath);
-  // ---------------------
 });
 
 // Handle unhandled promise rejections
