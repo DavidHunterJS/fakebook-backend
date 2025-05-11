@@ -40,6 +40,7 @@ connectDB();
 app.use(express.json());
 app.use(cors({
   origin: clientUrl,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));
 
