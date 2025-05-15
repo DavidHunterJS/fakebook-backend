@@ -189,7 +189,7 @@ export const deleteComment = async (req: Request, res: Response) => {
 export const toggleLikeComment = async (req: Request, res: Response) => {
   try {
     // Use commentId from params (not both id and commentId)
-    const { commentId } = req.params;
+    const { id } = req.params;
     const userId = req.user?.id;
     
     if (!userId) {
@@ -197,7 +197,7 @@ export const toggleLikeComment = async (req: Request, res: Response) => {
     }
 
     // Get comment with null check
-    const comment = await Comment.findById(commentId);
+    const comment = await Comment.findById(id);
     if (!comment) {
       return res.status(404).json({ message: 'Comment not found' });
     }
@@ -212,7 +212,7 @@ export const toggleLikeComment = async (req: Request, res: Response) => {
     await comment.toggleLike(userId);
 
     // Get updated comment data
-    const updatedComment = await Comment.findById(commentId)
+    const updatedComment = await Comment.findById(id)
       .populate('user', 'name profileImage')
       .lean();
     
@@ -222,7 +222,7 @@ export const toggleLikeComment = async (req: Request, res: Response) => {
         userId,
         comment.user.toString(),
         post._id.toString(),
-        commentId
+        id
       );
     }
     

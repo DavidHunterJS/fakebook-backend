@@ -35,53 +35,72 @@ export const createNotification = async (
   }
 };
 
-/**
- * @desc    Get user's notifications
- * @route   GET /api/notifications
- * @access  Private
- */
+/*
+* @desc    Get user's notifications
+* @route   GET /api/notifications
+* @access  Private
+*/
 export const getUserNotifications = async (req: Request, res: Response) => {
-  try {
-    const userId = req.user?.id;
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const skip = (page - 1) * limit;
-    const unreadOnly = req.query.unreadOnly === 'true';
+ try {
+   // Debug the user object
+   console.log("User in getUserNotifications:", req.user ? { 
+     _id: req.user._id,
+     username: req.user.username 
+   } : 'No user');
+   
+   // Change from req.user?.id to req.user?._id
+   const userId = req.user?._id;
+   
+   if (!userId) {
+     console.log("No user ID found in request");
+     return res.status(401).json({ message: 'User not authenticated' });
+   }
+   
+   console.log("Fetching notifications for user ID:", userId);
+   
+   const page = parseInt(req.query.page as string) || 1;
+   const limit = parseInt(req.query.limit as string) || 20;
+   const skip = (page - 1) * limit;
+   const unreadOnly = req.query.unreadOnly === 'true';
 
-    // Build query
-    const query: any = { recipient: userId };
-    if (unreadOnly) {
-      query.read = false;
-    }
+   // Build query
+   const query: any = { recipient: userId };
+   if (unreadOnly) {
+     query.read = false;
+   }
 
-    const notifications = await Notification.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate('sender', 'name username profileImage')
-      .lean();
+   const notifications = await Notification.find(query)
+     .sort({ createdAt: -1 })
+     .skip(skip)
+     .limit(limit)
+     .populate('sender', 'name username profileImage')
+     .lean();
 
-    const total = await Notification.countDocuments(query);
-    
-    // Get count of unread notifications for badge display
-    const unreadCount = await Notification.countDocuments({
-      recipient: userId,
-      read: false
-    });
+   console.log(`Found ${notifications.length} notifications`);
+   
+   const total = await Notification.countDocuments(query);
+   
+   // Get count of unread notifications for badge display
+   const unreadCount = await Notification.countDocuments({
+     recipient: userId,
+     read: false
+   });
 
-    return res.status(200).json({
-      notifications,
-      unreadCount,
-      pagination: {
-        total,
-        page,
-        pages: Math.ceil(total / limit)
-      }
-    });
-  } catch (error) {
-    console.error('Error getting notifications:', error);
-    return res.status(500).json({ message: 'Server error' });
-  }
+   console.log(`Unread count: ${unreadCount}`);
+
+   return res.status(200).json({
+     notifications,
+     unreadCount,
+     pagination: {
+       total,
+       page,
+       pages: Math.ceil(total / limit)
+     }
+   });
+ } catch (error) {
+   console.error('Error getting notifications:', error);
+   return res.status(500).json({ message: 'Server error' });
+ }
 };
 
 /**
