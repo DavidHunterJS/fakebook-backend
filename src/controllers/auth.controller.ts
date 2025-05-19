@@ -18,22 +18,61 @@ dotenv.config();
 // JWT secret from environment variables
 const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
-const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@yourfacebookclone.com';
+// const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@yourfacebookclone.com';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 // Google OAuth client
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
-
+interface MailOptions {
+  from: string;
+  to: string | string[];
+  subject: string;
+  text?: string;
+  html?: string;
+  attachments?: Array<{
+    filename: string;
+    content?: Buffer | string;
+    path?: string;
+    contentType?: string;
+  }>;
+}
 // Email transport configuration
-const transporter = nodemailer.createTransport({
-  // Configure for your email provider
-  host: process.env.EMAIL_HOST,
-  port: parseInt(process.env.EMAIL_PORT || '587'),
-  secure: process.env.EMAIL_SECURE === 'true',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD
-  }
-});
+let transporter;
+
+try {
+  transporter = nodemailer.createTransport({
+    host: process.env.EMAIL_HOST || 'smtp.example.com', // Provide a default that won't work but won't crash
+    port: parseInt(process.env.EMAIL_PORT || '587'),
+    secure: process.env.EMAIL_SECURE === 'true',
+    auth: {
+      user: process.env.EMAIL_USER || '',
+      pass: process.env.EMAIL_PASSWORD || ''
+    },
+    // Add this to handle connection issues
+    tls: {
+      rejectUnauthorized: process.env.NODE_ENV === 'production' 
+    }
+  });
+  
+  // Verify connection configuration
+  transporter.verify(function(error, success) {
+    if (error) {
+      console.log('SMTP server connection error:', error);
+    } else {
+      console.log('SMTP server connection is ready to accept messages');
+    }
+  });
+} catch (error) {
+  console.error('Failed to create email transporter:', error);
+  // Create a dummy transporter that logs but doesn't send
+  transporter = {
+    sendMail: (mailOptions: MailOptions) => {
+      console.log('Email would have been sent:', mailOptions);
+      return Promise.resolve({ response: 'Email sending skipped due to configuration error' });
+    }
+  };
+}
+
+export const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@yourapp.com';
 
 /**
  * Generate JWT token
