@@ -1,11 +1,22 @@
 import { Express, Request, Response, NextFunction } from 'express-serve-static-core';
 import { IUser } from '../models/User';
 
+// Define S3-specific file properties
+interface FileWithS3 extends Express.Multer.File {
+  location?: string;  // S3 URL
+  key?: string;       // S3 object key
+  bucket?: string;    // S3 bucket name
+  etag?: string;      // S3 ETag
+  acl?: string;       // S3 ACL
+}
+
 declare global {
   namespace Express {
-    // Extend Request with your user property
+    // Extend Request with your user property and file properties
     interface Request {
       user?: IUser;
+      file?: FileWithS3;
+      files?: FileWithS3[];
     }
   }
 }

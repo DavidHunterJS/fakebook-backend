@@ -3,6 +3,16 @@ import mongoose, { Schema, Model } from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { IUser } from '../types/user.types';
 import { Role, Permission } from '../config/roles';
+export interface UserReport {
+  user: string | IUser;
+  reason: string;
+  date: Date;
+}
+export interface PrivacySettings {
+  profileVisibility: 'public' | 'friends' | 'private';
+  friendsVisibility: 'public' | 'friends' | 'private';
+  postsVisibility: 'public' | 'friends' | 'private';
+}
 
 const UserSchema = new Schema<IUser>(
   {

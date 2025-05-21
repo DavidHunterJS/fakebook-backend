@@ -18,11 +18,16 @@ export enum PostVisibility {
   FRIENDS = 'friends',
   PRIVATE = 'private'
 }
-
+export interface MediaItem {
+  url: string;
+  key: string;
+  type: string;
+  originalFilename?: string;
+}
 export interface IPost extends Document {
   user: IUser['_id'];
   text: string;
-  media?: string[];
+  media?: MediaItem[];
   visibility: PostVisibility;
   likes: IUser['_id'][];
   comments: mongoose.Types.ObjectId[];
@@ -36,7 +41,12 @@ export interface IPost extends Document {
   originalPost: { type: Schema.Types.ObjectId, ref: 'Post' },
   sharedFrom: { type: Schema.Types.ObjectId, ref: 'User' }
 }
-
+const MediaItemSchema = new Schema({
+  url: { type: String, required: true },
+  key: { type: String, required: true },
+  type: { type: String, enum: ['image', 'video', 'audio', 'document'], default: 'image' },
+  originalFilename: { type: String }
+});
 const PostSchema = new Schema<IPost>(
   {
     user: {
@@ -48,9 +58,7 @@ const PostSchema = new Schema<IPost>(
       type: String,
       required: true
     },
-    media: [{
-      type: String
-    }],
+    media: [MediaItemSchema],
     visibility: {
       type: String,
       enum: Object.values(PostVisibility),

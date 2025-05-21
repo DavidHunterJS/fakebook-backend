@@ -29,6 +29,8 @@ import {
 import authMiddleware from '../middlewares/auth.middleware';
 import { isAdmin } from '../middlewares/role.middleware';
 import uploadMiddleware from '../middlewares/upload.middleware';
+import auth from '../middlewares/auth.middleware';
+import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
 
 const router: Router = express.Router();
 
@@ -153,8 +155,9 @@ router.put(
  * @access  Private
  */
 router.post(
-  '/profile/picture',
-  uploadMiddleware.single('profilePicture'),
+  '/profile/picture', 
+  auth, 
+  s3UploadMiddleware.profilePicture, 
   uploadProfilePicture
 );
 
@@ -165,8 +168,8 @@ router.post(
  */
 router.post(
   '/profile/cover', // Or just '/cover' if this router is mounted at /api/users/profile or /api/profile
-  authMiddleware, // Make sure auth middleware runs before upload if not applied globally to router
-  uploadMiddleware.coverPhoto, // <--- CORRECTED: Use the specific coverPhoto multer instance
+  auth, // Make sure auth middleware runs before upload if not applied globally to router
+  s3UploadMiddleware.coverPhoto, // <--- CORRECTED: Use the specific coverPhoto multer instance
   uploadCoverPhoto             // Your controller function
 );
 

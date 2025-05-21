@@ -133,14 +133,14 @@ const postMediaUpload = (req: Request, res: Response, next: NextFunction): void 
   const contentType = req.headers['content-type'] || '';
   
   if (contentType.includes('image')) {
-    postImageUpload.array('media', 10)(req, res, (err) => {
+    postImageUpload.array('media', 10)(req, res, (err: Error) => {
       if (err) {
         return res.status(400).json({ message: err.message });
       }
       next();
     });
   } else if (contentType.includes('video')) {
-    postVideoUpload.array('media', 2)(req, res, (err) => {
+    postVideoUpload.array('media', 2)(req, res, (err: Error) => {
       if (err) {
         return res.status(400).json({ message: err.message });
       }

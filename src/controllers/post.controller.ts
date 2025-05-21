@@ -4,12 +4,14 @@ import { validationResult } from 'express-validator';
 import mongoose from 'mongoose';
 import fs from 'fs';
 import path from 'path';
-import Post, { PostVisibility } from '../models/Post';
+import Post, { PostVisibility, MediaItem } from '../models/Post';
 import User from '../models/User';
 import Comment from '../models/Comment';
 import { Permission } from '../config/roles';
 import { NotificationService } from '../services/notification.service';
 import { IUser } from '../types/user.types'; // Adjust path
+import { S3UploadRequest, FileWithS3 } from '../types/file.types';
+import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
 interface PaginationQuery { page?: string; limit?: string; }
 
 // Import or define transformUserImageUrls helper
@@ -34,7 +36,11 @@ const transformUserImageUrls = (user: any): any => {
 interface PostIdParam {
   id: string;
 }
-
+interface AuthenticatedRequest extends S3UploadRequest {
+  user: {
+    id: string;
+  };
+}
 interface CommentIdParam {
   commentId: string;
 }
@@ -54,59 +60,141 @@ interface PostIdParam {
 }
 
 /**
- * @route   POST api/posts
- * @desc    Create a new post
- * @access  Private
+ * Create a new post
+ * @route POST /api/posts
  */
-export const createPost = async (req: Request, res: Response): Promise<Response> => {
+export const createPost = async (req: Request, res: Response): Promise<void> => {
   try {
+    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      // Clean up uploaded files if validation fails
-      if (req.files && Array.isArray(req.files)) {
-        req.files.forEach(file => {
-          fs.unlinkSync(file.path);
-        });
-      }
-      return res.status(400).json({ errors: errors.array() });
+      res.status(400).json({ errors: errors.array() });
+      return;
     }
 
-    if (!req.user) {
-      return res.status(401).json({ message: 'Not authorized' });
+    // Ensure user is authenticated
+    if (!req.user || !req.user.id) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
     }
-
-    const { text, visibility = 'public' } = req.body;
-
-    // Ensure there is either text or media
-    if (!text && (!req.files || (Array.isArray(req.files) && req.files.length === 0))) {
-      return res.status(400).json({ message: 'Post must contain text or media' });
+    
+    const userId = req.user.id;
+    const { text = '', visibility = PostVisibility.PUBLIC } = req.body;
+    
+    // Check if there's either text or media
+    if ((!text || text.trim() === '') && (!req.files || !Array.isArray(req.files) || req.files.length === 0)) {
+      res.status(400).json({ error: 'Post must contain either text or media' });
+      return;
     }
-
-    // Create new post
+    
+    // Process media files from S3 upload
+    const files = req.files as Express.Multer.File[] | undefined;
+    
+    // Create media objects that match your MediaItem schema
+    const mediaItems: MediaItem[] = files ? files.map(file => {
+      // Get file info
+      const key = ((file as any).key as string) || `posts/${file.filename}`;
+      const url = ((file as any).location as string) || 
+                 `http://localhost:5000/uploads/${key}`;
+      
+      // Determine media type based on mimetype
+      let type = 'document';
+      if (file.mimetype?.startsWith('image/')) type = 'image';
+      else if (file.mimetype?.startsWith('video/')) type = 'video';
+      else if (file.mimetype?.startsWith('audio/')) type = 'audio';
+      
+      // Create media item object that matches the schema
+      return {
+        url,
+        key,
+        type,
+        originalFilename: file.originalname
+      };
+    }) : [];
+    
+    console.log('Media items:', JSON.stringify(mediaItems, null, 2));
+    
+    // Create a new post with the media items
     const newPost = new Post({
-      user: req.user.id,
-      text: text || '',
+      user: userId,
+      text: text || "Post with media",
+      media: mediaItems,
       visibility
     });
-
-    // Add media files if they exist
-    if (req.files && Array.isArray(req.files)) {
-      newPost.media = req.files.map(file => file.filename);
+    
+    console.log('New post object before save:', {
+      user: newPost.user,
+      text: newPost.text,
+      mediaCount: newPost.media?.length || 0,
+      mediaItems: newPost.media
+    });
+    
+    // Save the post
+    const savedPost = await newPost.save();
+    
+    // Populate user information for response
+    await savedPost.populate('user', 'username firstName lastName profilePicture');
+    
+    res.status(201).json({ 
+      message: 'Post created successfully',
+      post: savedPost
+    });
+  } catch (error: unknown) {
+    console.error('Error creating post:', error);
+    
+    // Add more detailed error logging
+    if (error instanceof Error) {
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      
+      // Log mongoose validation errors in detail
+      if ((error as any).errors) {
+        Object.keys((error as any).errors).forEach(key => {
+          console.error(`Validation error for field '${key}':`, (error as any).errors[key]);
+        });
+      }
     }
-
-    await newPost.save();
-
-    // Populate user data for response
-    const populatedPost = await Post.findById(newPost._id)
-      .populate('user', 'username firstName lastName profilePicture')
-      .populate('likes', 'username firstName lastName profilePicture');
-
-    return res.status(201).json(populatedPost);
-  } catch (err) {
-    console.error((err as Error).message);
-    return res.status(500).send('Server error');
+    
+    res.status(500).json({ error: 'Server error' });
   }
 };
+
+/**
+ * Get all posts (with pagination)
+ * @route GET /api/posts
+ */
+export const getPosts = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
+    
+    // Get posts with populated author
+    const posts = await Post.find({ visibility: 'public' })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('author', 'username firstName lastName profilePicture')
+      .lean();
+    
+    // Get total count for pagination
+    const total = await Post.countDocuments({ visibility: 'public' });
+    
+    res.json({
+      posts,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error getting posts:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
 
 /**
  * @route   GET api/posts (or api/posts/feed)
@@ -464,61 +552,60 @@ export const updatePost = async (
  * @desc    Delete a post
  * @access  Private
  */
-export const deletePost = async (
-  req: Request<PostIdParam>,
-  res: Response
-): Promise<Response> => {
+
+export const deletePost = async (req: Request, res: Response): Promise<void> => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+    // Ensure user is authenticated
+    if (!req.user || !req.user.id) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
     }
-
-    if (!req.user) {
-      return res.status(401).json({ message: 'Not authorized' });
-    }
-
-    // Find post
-    const post = await Post.findById(req.params.id);
+    
+    const postId = req.params.id;
+    
+    // Find the post
+    const post = await Post.findById(postId);
+    
     if (!post) {
-      return res.status(404).json({ message: 'Post not found' });
+      res.status(404).json({ error: 'Post not found' });
+      return;
     }
-
-    // Check if user is authorized to delete post
-    if (post.user.toString() !== req.user.id) {
-      // Check if the user has the permission to delete any post
-      const currentUser = await User.findById(req.user.id);
-      if (!currentUser || !currentUser.permissions?.includes(Permission.DELETE_ANY_POST)) {
-        return res.status(403).json({ message: 'Not authorized to delete this post' });
-      }
+    
+    // Check if user is the author or has admin permissions
+    if (post.user.toString() !== req.user.id && req.user.role !== 'admin') {
+      res.status(403).json({ error: 'You do not have permission to delete this post' });
+      return;
     }
-
+    
     // Delete associated media files
     if (post.media && post.media.length > 0) {
-      post.media.forEach(filename => {
-        const filePath = path.join(__dirname, '../../uploads/posts', filename);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
+      for (const mediaItem of post.media) {
+        if (mediaItem.key) {
+          try {
+            if (process.env.S3_BUCKET_NAME) {
+              // Delete from S3
+              await s3UploadMiddleware.deleteFile(mediaItem.key);
+            } else {
+              // Delete from local storage
+              const filePath = path.join(__dirname, '../../uploads/', mediaItem.key);
+              if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+              }
+            }
+          } catch (fileError: unknown) {
+            console.error(`Failed to delete file ${mediaItem.key}:`, fileError);
+          }
         }
-      });
+      }
     }
-
-    // Delete associated comments
-    await Comment.deleteMany({ post: post._id });
-
-    // Delete post
-    await post.deleteOne();
-
-    // Remove from saved posts for all users
-    await User.updateMany(
-      { savedPosts: post._id },
-      { $pull: { savedPosts: post._id } }
-    );
-
-    return res.json({ message: 'Post deleted' });
-  } catch (err) {
-    console.error((err as Error).message);
-    return res.status(500).send('Server error');
+    
+    // Delete the post
+    await Post.findByIdAndDelete(postId);
+    
+    res.json({ message: 'Post deleted successfully' });
+  } catch (error: unknown) {
+    console.error('Error deleting post:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 };
 

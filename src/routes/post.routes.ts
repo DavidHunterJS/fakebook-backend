@@ -6,6 +6,8 @@ import authMiddleware from '../middlewares/auth.middleware';
 import uploadMiddleware from '../middlewares/upload.middleware';
 import { hasPermission } from '../middlewares/role.middleware';
 import { Permission } from '../config/roles';
+import auth from '../middlewares/auth.middleware';
+import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
 
 const router: Router = express.Router();
 
@@ -21,7 +23,7 @@ router.post(
   '/',
   [
     hasPermission(Permission.CREATE_POST),
-    uploadMiddleware.array('media', 10),
+    s3UploadMiddleware.postMedia,  // Replace uploadMiddleware with S3 middleware
     body('text')
       .optional({ nullable: true })
       .isString()
