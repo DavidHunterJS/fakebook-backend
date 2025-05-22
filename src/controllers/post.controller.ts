@@ -17,21 +17,21 @@ interface PaginationQuery { page?: string; limit?: string; }
 // Import or define transformUserImageUrls helper
 // This helper MUST be available in this file's scope
 // Example placeholder definition:
-const getFileUrl = (filename: string | undefined | null, type: string): string => {
-    if (!filename) return '';
-    const baseUrl = process.env.BASE_URL || 'http://localhost:5000';
-    const pathSegment = type === 'cover' ? 'covers' : type === 'post' ? 'posts' : type;
-    return `${baseUrl}/uploads/${pathSegment}/${filename}`;
-};
-const transformUserImageUrls = (user: any): any => {
-  if (!user || typeof user === 'string') return user;
-  const userData = typeof user.toObject === 'function' ? user.toObject() : { ...user };
-  return {
-    ...userData,
-    profilePicture: getFileUrl(userData.profilePicture, 'profile'),
-    coverPhoto: getFileUrl(userData.coverPhoto, 'cover'),
-  };
-};
+// const getFileUrl = (filename: string | undefined | null, type: string): string => {
+//     if (!filename) return '';
+//     const baseUrl = process.env.BASE_URL || 'http://localhost:5000';
+//     const pathSegment = type === 'cover' ? 'covers' : type === 'post' ? 'posts' : type;
+//     return `${baseUrl}/uploads/${pathSegment}/${filename}`;
+// };
+// const transformUserImageUrls = (user: any): any => {
+//   if (!user || typeof user === 'string') return user;
+//   const userData = typeof user.toObject === 'function' ? user.toObject() : { ...user };
+//   return {
+//     ...userData,
+//     profilePicture: getFileUrl(userData.profilePicture, 'profile'),
+//     coverPhoto: getFileUrl(userData.coverPhoto, 'cover'),
+//   };
+// };
 // Types for request parameters and query
 interface PostIdParam {
   id: string;
@@ -261,7 +261,7 @@ export const getFeedPosts = async (
         const isSaved = (currentUser.savedPosts || []).some(savedId => savedId?.toString() === post._id.toString());
 
         // Transform the populated user object within the post
-        const transformedUser = post.user ? transformUserImageUrls(post.user) : null;
+        // const transformedUser = post.user ? transformUserImageUrls(post.user) : null;
 
         // --- CORRECTION HERE ---
         // Directly spread the 'post' object (which is already lean)
@@ -269,7 +269,7 @@ export const getFeedPosts = async (
         return {
           _id: post._id, // Ensure essential fields are present
           text: post.text,
-          user: transformedUser, // Use the transformed user
+          user: post.user, // Use the transformed user
           likes: post.likes,
           comments: post.comments, // Or maybe just commentsCount is needed?
           createdAt: post.createdAt,

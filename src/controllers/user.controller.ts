@@ -1,16 +1,15 @@
 // src/controllers/user.controller.ts
 import { Request, Response } from 'express';
-import mongoose, {FlattenMaps} from 'mongoose';
+import mongoose from 'mongoose';
 import { validationResult } from 'express-validator';
-import fs from 'fs';
-import path from 'path';
 import User from '../models/User';
 import Post from '../models/Post';
 import { IUser } from '../types/user.types'; // Ensure this path is correct
+import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
 
 // --- IMPORT getFileUrl ---
-import uploadMiddleware from '../middlewares/upload.middleware';
-const { getFileUrl } = uploadMiddleware;
+// import uploadMiddleware from '../middlewares/upload.middleware';
+// const { getFileUrl } = uploadMiddleware;
 
 // Types for request parameters
 interface UserIdParam {
@@ -30,26 +29,6 @@ interface PaginationQuery {
 interface InactiveUsersQuery extends PaginationQuery {
   days?: string;
 }
-
-// --- ADD TRANSFORMATION HELPER ---
-// Takes a user object (Mongoose doc or lean object) and returns a plain object
-// with profilePicture and coverPhoto fields converted to full URLs.
-
-const transformUserImageUrls = (user: any): any => {
-  // If user is null, undefined, or just a string (ID), we can't transform image URLs from it.
-  // Return it as is, or handle as appropriate for your logic.
-  if (!user || typeof user === 'string') {
-    return user;
-  }
-
-  const userData = typeof user.toObject === 'function' ? user.toObject() : { ...user };
-
-  return {
-    ...userData,
-    profilePicture: getFileUrl(userData.profilePicture, 'profile'),
-    coverPhoto: getFileUrl(userData.coverPhoto, 'cover'),
-  };
-};
 
 // --- CONTROLLER FUNCTIONS ---
 
@@ -114,12 +93,8 @@ export const searchUsers = async (
 
     const total = await User.countDocuments(query);
 
-    // --- Transform image URLs before sending ---
-    const transformedUsers = users.map(transformUserImageUrls);
-    // -----------------------------------------
-
     return res.json({
-      users: transformedUsers, // Send transformed users
+      users: users, // Send raw users
       pagination: {
         total,
         page,
@@ -222,11 +197,8 @@ export const getFriendSuggestions = async (req: Request, res: Response): Promise
              ];
         }
 
-        // --- Transform image URLs before sending ---
-        const transformedSuggestions = finalSuggestions.map(transformUserImageUrls);
-        // -----------------------------------------
 
-        return res.json(transformedSuggestions);
+        return res.json(finalSuggestions);
 
     } catch (err) {
         console.error('Error in getFriendSuggestions (user.controller):', (err as Error).message);
@@ -245,103 +217,119 @@ export const getUserById = async (
   res: Response
 ): Promise<Response> => {
   try {
-    // ... (validation, auth check) ...
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
 
-    const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID format' });
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+    const currentAuthUserId = req.user.id;
 
-    const user = await User.findById(id)
-      // Select all fields needed, including image fields and privacy settings
+    const { id: viewedUserId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(viewedUserId)) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+
+    const viewedUser = await User.findById(viewedUserId)
       .select('-password -resetPasswordToken -resetPasswordExpires -verificationToken -verificationTokenExpires')
       .lean();
 
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    // Check blocking status requires fetching current user
-    const currentUser = await User.findById(req.user!.id).select('friends blockedUsers sentRequests friendRequests').lean(); // Fetch only needed fields
-    if (!currentUser) return res.status(404).json({ message: 'Current user not found' });
-
-
-    const isOwnProfile = user._id.toString() === req.user!.id;
-
-    // Check blocking
-    const isBlockedByCurrentUser = (currentUser.blockedUsers || []).some(blockedId => blockedId.toString() === user._id.toString());
-    const currentUserIsBlocked = (user.blockedUsers || []).some(blockedId => blockedId.toString() === req.user!.id);
-
-    if (isBlockedByCurrentUser || currentUserIsBlocked) {
-      return res.status(403).json({ message: 'User not accessible' });
+    if (!viewedUser) {
+      return res.status(404).json({ message: 'User not found' });
     }
 
-    // Check privacy
-    const isFriend = (currentUser.friends || []).some(friendId => friendId.toString() === user._id.toString());
+    const currentUser = await User.findById(currentAuthUserId)
+      .select('friends blockedUsers sentRequests friendRequests') // Ensure all needed fields are here
+      .lean();
+
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Authenticated user not found' });
+    }
+
+    const isOwnProfile = viewedUser._id.toString() === currentAuthUserId;
+
+    const isBlockedByCurrentUser = (currentUser.blockedUsers || []).some(blockedId => blockedId.toString() === viewedUser._id.toString());
+    const currentUserIsBlockedByViewedUser = (viewedUser.blockedUsers || []).some(blockedId => blockedId.toString() === currentAuthUserId);
+
+    if (isBlockedByCurrentUser || currentUserIsBlockedByViewedUser) {
+      return res.status(403).json({
+        message: 'User not accessible due to blocking.',
+        profile: {
+            _id: viewedUser._id,
+            username: viewedUser.username,
+            firstName: viewedUser.firstName,
+            lastName: viewedUser.lastName,
+            profilePicture: viewedUser.profilePicture, // Raw value
+            coverPhoto: viewedUser.coverPhoto,         // Raw value
+            privacyRestricted: true,
+            isBlocked: true
+        }
+      });
+    }
+
+    const isFriend = (currentUser.friends || []).some(friendId => friendId.toString() === viewedUser._id.toString());
 
     if (!isOwnProfile &&
-        (user.privacySettings?.profileVisibility === 'private' ||
-        (user.privacySettings?.profileVisibility === 'friends' && !isFriend))) {
-       // --- Transform limited data ---
-       return res.json(transformUserImageUrls({
-            _id: user._id,
-            username: user.username,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            profilePicture: user.profilePicture, // Pass filename
-            privacyRestricted: true
-        }));
-       // ----------------------------
+        (viewedUser.privacySettings?.profileVisibility === 'private' ||
+        (viewedUser.privacySettings?.profileVisibility === 'friends' && !isFriend))) {
+      return res.json({
+            profile: {
+                _id: viewedUser._id,
+                username: viewedUser.username,
+                firstName: viewedUser.firstName,
+                lastName: viewedUser.lastName,
+                profilePicture: viewedUser.profilePicture, // Raw value
+                coverPhoto: viewedUser.coverPhoto,         // Raw value
+                privacyRestricted: true
+            }
+        });
     }
 
-    // Determine relationship status
-     const hasSentRequest = (currentUser.sentRequests || []).some(requestId => requestId.toString() === user._id.toString());
-     const hasReceivedRequest = (currentUser.friendRequests || []).some(requestId => requestId.toString() === user._id.toString());
+    const hasSentRequest = (currentUser.sentRequests || []).some(requestId => requestId.toString() === viewedUser._id.toString());
+    const hasReceivedRequest = (currentUser.friendRequests || []).some(requestId => requestId.toString() === viewedUser._id.toString());
 
-    // Get recent posts (respecting privacy)
     let recentPostsData: any[] = [];
     if (isOwnProfile ||
-        user.privacySettings?.postsVisibility === 'public' ||
-        (user.privacySettings?.postsVisibility === 'friends' && isFriend)) {
-        recentPostsData = await Post.find({ user: user._id })
-            .populate('user', 'username firstName lastName profilePicture') // Select profilePicture here too
+        viewedUser.privacySettings?.postsVisibility === 'public' ||
+        (viewedUser.privacySettings?.postsVisibility === 'friends' && isFriend)) {
+        recentPostsData = await Post.find({ user: viewedUser._id })
+            .populate('user', 'username firstName lastName profilePicture') // Sends raw profilePicture for post author
             .sort({ createdAt: -1 })
             .limit(5)
-            .lean(); // Use lean
+            .lean();
     }
 
-    // Get mutual friends
     let mutualFriendsData: any[] = [];
-    if (!isOwnProfile && user.friends && currentUser.friends) {
-        const userFriendIds = user.friends.map(friend => friend.toString());
-        const currentUserFriendIds = currentUser.friends.map(friend => friend.toString());
-        const mutualFriendIds = userFriendIds.filter(id => currentUserFriendIds.includes(id));
+    if (!isOwnProfile && viewedUser.friends && currentUser.friends) {
+        const viewedUserFriendIds = (viewedUser.friends || []).map(friend => friend.toString());
+        const currentUserFriendIds = (currentUser.friends || []).map(friend => friend.toString());
+        const mutualFriendIds = viewedUserFriendIds.filter(id => currentUserFriendIds.includes(id));
 
         if (mutualFriendIds.length > 0) {
             mutualFriendsData = await User.find({ _id: { $in: mutualFriendIds.map(id => new mongoose.Types.ObjectId(id)) } })
-                .select('username firstName lastName profilePicture') // Select profilePicture
+                .select('username firstName lastName profilePicture') // Sends raw profilePicture for mutual friends
                 .limit(6)
-                .lean(); // Use lean
+                .lean();
         }
     }
 
-    // --- Transform all image URLs before sending ---
-    const transformedUser = transformUserImageUrls(user);
-    const transformedMutualFriends = mutualFriendsData.map(transformUserImageUrls);
-    const transformedRecentPosts = recentPostsData.map(post => ({
-        ...post,
-        // Handle posts where user might be null or already an object from populate
-        user: post.user ? transformUserImageUrls(post.user) : null
-    }));
-    // -------------------------------------------
-
+    // The 'viewedUser' object contains raw S3 keys or default placeholders for image fields
     return res.json({
-      ...transformedUser,
+      profile: {
+        ...viewedUser,
+        friendCount: viewedUser.friends ? viewedUser.friends.length : 0,
+      },
       relationshipStatus: { isOwnProfile, isFriend, hasSentRequest, hasReceivedRequest },
-      friendCount: user.friends ? user.friends.length : 0, // Use original user count
-      recentPosts: transformedRecentPosts,
-      mutualFriends: transformedMutualFriends
+      recentPosts: recentPostsData,
+      mutualFriends: mutualFriendsData
     });
 
   } catch (err) {
-    console.error('Error in getUserById:', (err as Error).message);
-    return res.status(500).send('Server error');
+    const error = err as Error;
+    console.error('Error in getUserById:', error.message, error.stack);
+    return res.status(500).json({ message: 'Server error', detail: error.message });
   }
 };
 
@@ -352,103 +340,139 @@ export const getUserById = async (
  * @access  Private
  */
 export const getUserProfile = async (
-    req: Request<UsernameParam>,
+    req: Request<UsernameParam>, // Use UsernameParam for req.params
     res: Response
   ): Promise<Response> => {
     try {
-      // ... (validation, auth check) ...
-      const { username } = req.params;
-
-      const user = await User.findOne({ username })
-        .select('-password ...') // Select necessary fields including profilePicture, coverPhoto
-        .populate('friends', 'username firstName lastName profilePicture') // Select profilePicture here too
-        .lean(); // Use lean
-
-      if (!user) return res.status(404).json({ message: 'User not found' });
-
-      // Fetch current user for checks
-      const currentUser = await User.findById(req.user!.id).select('friends blockedUsers sentRequests friendRequests').lean();
-      if (!currentUser) return res.status(404).json({ message: 'Current user not found' });
-
-      const isOwnProfile = user._id.toString() === req.user!.id;
-
-      // Blocking checks...
-      const isBlockedByCurrentUser = (currentUser.blockedUsers || []).some(id => id.toString() === user._id.toString());
-      const currentUserIsBlocked = (user.blockedUsers || []).some(id => id.toString() === req.user!.id);
-      if (isBlockedByCurrentUser || currentUserIsBlocked) return res.status(403).json({ message: 'User not accessible' });
-
-      // Relationship status...
-      const isFriend = (currentUser.friends || []).some(id => id.toString() === user._id.toString());
-      const hasSentRequest = (currentUser.sentRequests || []).some(id => id.toString() === user._id.toString());
-      const hasReceivedRequest = (currentUser.friendRequests || []).some(id => id.toString() === user._id.toString());
-
-       // Get recent posts (respecting privacy) - reuse logic from getUserById if possible
-       let recentPostsData: any[] = [];
-       // ... (fetch posts logic, ensuring user is populated with profilePicture) ...
-       recentPostsData = await Post.find({ user: user._id })
-         .populate('user', 'username firstName lastName profilePicture')
-         .sort({ createdAt: -1 })
-         .limit(5)
-         .lean();
-
-
-      // Get mutual friends - reuse logic from getUserById if possible
-      let mutualFriendsData: any[] = [];
-      // ... (fetch mutual friends logic, ensuring profilePicture is selected) ...
-      if (!isOwnProfile && user.friends && currentUser.friends) {
-        const userFriendIds = (user.friends || []).map((friend: string | FlattenMaps<IUser> | null | undefined) => { // Added null/undefined for safety
-          if (friend && typeof friend === 'object' && friend._id) {
-            // It's a populated user object (FlattenMaps<IUser>)
-            return friend._id.toString();
-          }
-          if (typeof friend === 'string') {
-            // It's already a string ID
-            return friend;
-          }
-          // Handle cases where friend might be an ObjectId instance (if .lean() wasn't used or populate was partial)
-          // or if friend is null/undefined after a failed populate.
-          if (friend && typeof friend.toString === 'function') {
-              // This might catch ObjectId instances if they weren't stringified by .lean()
-              // For safety, ensure it's not trying to call toString on the object itself if it's already handled.
-              // This condition is a bit tricky if `friend` is an object without `_id` but has `toString`.
-              // Usually, for your case, the first two `if` statements are the most relevant.
-              return friend.toString();
-          }
-          return null; // Or some other way to handle unexpected/null items
-        }).filter(id => id !== null) as string[]; // Filter out any nulls and assert the type
-          const currentUserFriendIds = currentUser.friends.map(friend => friend.toString());
-          const mutualFriendIds = userFriendIds.filter(id => currentUserFriendIds.includes(id));
-          if (mutualFriendIds.length > 0) {
-              mutualFriendsData = await User.find({ _id: { $in: mutualFriendIds.map(id => new mongoose.Types.ObjectId(id)) }})
-                  .select('username firstName lastName profilePicture')
-                  .limit(6)
-                  .lean();
-          }
+      const errors = validationResult(req); // Apply if you have validation rules for username param
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
       }
 
-      // --- Transform images ---
-      const transformedProfile = transformUserImageUrls(user);
-      const transformedMutualFriends = mutualFriendsData.map(transformUserImageUrls);
-      const transformedRecentPosts = recentPostsData.map(post => ({
-          ...post,
-          user: post.user ? transformUserImageUrls(post.user) : null
-      }));
-      // -----------------------
+      if (!req.user || !req.user.id) { // Check for authenticated user context
+        return res.status(401).json({ message: 'Not authorized' });
+      }
+      const currentAuthUserId = req.user.id;
 
+      const { username } = req.params;
 
-      // Structure the response
+      const viewedUser = await User.findOne({ username })
+        // Select all necessary fields. Deselecting sensitive ones is good.
+        // profilePicture and coverPhoto should be included by default if not deselected.
+        .select('-password -resetPasswordToken -resetPasswordExpires -verificationToken -verificationTokenExpires')
+        .populate<{ friends: IUser[] }>('friends', 'username firstName lastName profilePicture') // Ensure fields for friends are selected
+        .lean();
+
+      if (!viewedUser) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      const currentUser = await User.findById(currentAuthUserId)
+        .select('friends blockedUsers sentRequests friendRequests') // Select fields needed for relationship logic
+        .lean();
+
+      if (!currentUser) {
+        // This should ideally not happen if auth middleware is working
+        return res.status(404).json({ message: 'Authenticated user data not found' });
+      }
+
+      const isOwnProfile = viewedUser._id.toString() === currentAuthUserId;
+
+      // Blocking checks
+      const isBlockedByCurrentUser = (currentUser.blockedUsers || []).some(id => id.toString() === viewedUser._id.toString());
+      const currentUserIsBlockedByViewedUser = (viewedUser.blockedUsers || []).some(id => id.toString() === currentAuthUserId);
+
+      if (isBlockedByCurrentUser || currentUserIsBlockedByViewedUser) {
+        // Return minimal info for blocked/restricted profile
+        return res.status(403).json({
+            message: 'User not accessible due to blocking.',
+            profile: {
+                _id: viewedUser._id,
+                username: viewedUser.username,
+                firstName: viewedUser.firstName,
+                lastName: viewedUser.lastName,
+                profilePicture: viewedUser.profilePicture, // Raw S3 key or default placeholder
+                // coverPhoto: viewedUser.coverPhoto,      // Raw S3 key or default placeholder
+                privacyRestricted: true,
+                isBlocked: true
+            }
+        });
+      }
+
+      // Relationship status
+      const isFriend = (currentUser.friends || []).some(id => id.toString() === viewedUser._id.toString());
+      const hasSentRequest = (currentUser.sentRequests || []).some(id => id.toString() === viewedUser._id.toString());
+      const hasReceivedRequest = (currentUser.friendRequests || []).some(id => id.toString() === viewedUser._id.toString());
+
+      // Privacy check for non-own profiles (applies to the full profile view)
+      if (!isOwnProfile &&
+          (viewedUser.privacySettings?.profileVisibility === 'private' ||
+          (viewedUser.privacySettings?.profileVisibility === 'friends' && !isFriend))) {
+            return res.json({
+                profile: { // Send limited data
+                    _id: viewedUser._id,
+                    username: viewedUser.username,
+                    firstName: viewedUser.firstName,
+                    lastName: viewedUser.lastName,
+                    profilePicture: viewedUser.profilePicture, // Raw value
+                    coverPhoto: viewedUser.coverPhoto,         // Raw value
+                    privacyRestricted: true
+                }
+            });
+      }
+
+      // Get recent posts (respecting privacy)
+      let recentPostsData: any[] = [];
+      if (isOwnProfile ||
+          viewedUser.privacySettings?.postsVisibility === 'public' ||
+          (viewedUser.privacySettings?.postsVisibility === 'friends' && isFriend)) {
+          recentPostsData = await Post.find({ user: viewedUser._id })
+            // Ensure populated user within post also sends raw profilePicture
+            .populate('user', 'username firstName lastName profilePicture')
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .lean();
+      }
+
+      // Get mutual friends
+      let mutualFriendsData: any[] = [];
+      if (!isOwnProfile && viewedUser.friends && currentUser.friends) {
+        const viewedUserFriendIds = (viewedUser.friends || []).map((friend: any) => { // Use 'any' or proper populated type
+            if (friend && typeof friend === 'object' && friend._id) return friend._id.toString();
+            if (typeof friend === 'string') return friend;
+            if (friend && typeof friend.toString === 'function') return friend.toString(); // For ObjectId instances
+            return null;
+        }).filter(id => id !== null) as string[];
+
+        const currentUserFriendIds = (currentUser.friends || []).map(friend => friend.toString());
+        const mutualFriendIds = viewedUserFriendIds.filter(id => currentUserFriendIds.includes(id));
+
+        if (mutualFriendIds.length > 0) {
+            mutualFriendsData = await User.find({ _id: { $in: mutualFriendIds.map(id => new mongoose.Types.ObjectId(id)) }})
+                // Ensure populated mutual friends also send raw profilePicture
+                .select('username firstName lastName profilePicture')
+                .limit(6)
+                .lean();
+        }
+      }
+
+      // Structure the response with raw data
+      // The 'viewedUser' (from .lean()) contains raw S3 keys or default placeholders
+      // for profilePicture and coverPhoto.
       return res.json({
-        profile: { // Keep the nested structure if frontend expects it
-            ...transformedProfile,
-            friendCount: user.friends ? user.friends.length : 0
+        profile: {
+            ...viewedUser, // Spreads all fields from the lean viewedUser object
+            friendCount: viewedUser.friends ? viewedUser.friends.length : 0,
         },
         relationshipStatus: { isOwnProfile, isFriend, hasSentRequest, hasReceivedRequest },
-        recentPosts: transformedRecentPosts,
-        mutualFriends: transformedMutualFriends
+        // recentPostsData already contains posts with raw user.profilePicture (due to populate + lean)
+        recentPosts: recentPostsData,
+        // mutualFriendsData already contains users with raw profilePicture (due to select + lean)
+        mutualFriends: mutualFriendsData
       });
 
     } catch (err) {
-      console.error('Error in getUserProfile:', (err as Error).message);
+      console.error('Error in getUserProfile:', (err as Error).message, (err as Error).stack);
       return res.status(500).send('Server error');
     }
 };
@@ -465,184 +489,154 @@ export const updateProfile = async (req: Request, res: Response): Promise<Respon
       return res.status(400).json({ errors: errors.array() });
     }
 
-    if (!req.user) {
+    // It's good practice to also check req.user.id if your types don't guarantee it
+    if (!req.user || !req.user.id) {
       return res.status(401).json({ message: 'Not authorized' });
     }
+    const userId = req.user.id; // Use consistently
 
-    console.log("Update profile called for user:", req.user.id);
+    console.log("Update profile called for user:", userId);
     console.log("Request body:", req.body);
 
     const { firstName, lastName, bio, location, birthday } = req.body;
 
-    // --- Build update object ---
-    //    THIS IS WHERE updateFields IS DECLARED
     const updateFields: Partial<IUser> = {};
-    // -----------------------------
-    if (firstName !== undefined) updateFields.firstName = firstName; // Check for undefined to allow empty strings
+    if (firstName !== undefined) updateFields.firstName = firstName;
     if (lastName !== undefined) updateFields.lastName = lastName;
     if (bio !== undefined) updateFields.bio = bio;
     if (location !== undefined) updateFields.location = location;
-    if (birthday) { // Birthday might be null or empty string, handle appropriately
+    if (birthday) {
         try {
-            updateFields.birthday = new Date(birthday);
-            // Check if date is valid, if not, you might want to skip or error
-            if (isNaN(updateFields.birthday.getTime())) {
-                console.warn("Invalid birthday date received:", birthday);
-                delete updateFields.birthday; // Don't set if invalid
+            const parsedDate = new Date(birthday);
+            // Check if date is valid
+            if (!isNaN(parsedDate.getTime())) {
+                updateFields.birthday = parsedDate;
+            } else {
+                console.warn("Invalid birthday date received:", birthday, "- not updating field.");
+                // Optionally, you could return a 400 error here if birthday format is strict
+                // return res.status(400).json({ message: 'Invalid birthday format' });
             }
         } catch (dateError) {
             console.warn("Error parsing birthday date:", birthday, dateError);
-            // Decide if you want to error out or just skip the birthday field
-            // return res.status(400).json({ message: 'Invalid birthday format' });
         }
     }
 
-
     console.log("Fields to update:", updateFields);
 
-    // Check if update object is empty
+    // Check if update object is empty (no actual data fields were provided or valid)
     if (Object.keys(updateFields).length === 0) {
-      console.log("Warning: No valid fields to update");
-      // It's not necessarily an error if they send empty validatable fields
-      // but if all fields are undefined, it's good to note.
-      // You might choose to return current user data or a specific message.
-      const currentUser = await User.findById(req.user.id)
+      console.log("Warning: No valid fields to update. Returning current user data.");
+      const currentUser = await User.findById(userId)
         .select('-password -resetPasswordToken -resetPasswordExpires -verificationToken -verificationTokenExpires')
-        .lean();
-      if (!currentUser) return res.status(404).json({ message: 'User not found' });
-      return res.json(transformUserImageUrls(currentUser));
+        .lean(); // Use lean to get a plain object
+
+      if (!currentUser) {
+        // This case should be rare if the user is authenticated
+        return res.status(404).json({ message: 'User not found' });
+      }
+      return res.json(currentUser); // <<< CORRECTED: Send raw currentUser data
     }
 
-    // Get user before update to compare (optional, for detailed logging)
-    // const beforeUser = await User.findById(req.user.id).lean();
-    // console.log("User before update:", beforeUser);
-
     const updatedUser = await User.findByIdAndUpdate(
-      req.user.id,
+      userId, // Use consistent userId variable
       { $set: updateFields },
-      { new: true, runValidators: true } // runValidators ensures schema validation
+      { new: true, runValidators: true }
     )
-    .select('-password -resetPasswordToken -resetPasswordExpires -verificationToken -verificationTokenExpires') // Select desired fields
+    .select('-password -resetPasswordToken -resetPasswordExpires -verificationToken -verificationTokenExpires')
     .lean(); // Use lean for plain JS object
 
-    console.log("DB operation result (updatedUser):", updatedUser);
+    console.log("DB operation result (updatedUser):", updatedUser ? updatedUser._id : 'null');
 
     if (!updatedUser) {
       console.log("User not found after update attempt");
       return res.status(404).json({ message: 'User not found during update' });
     }
 
-    // Logging changes (optional)
-    // if (beforeUser) {
-    //   console.log("Changes applied:");
-    //   Object.keys(updateFields).forEach(field => {
-    //     if (field === 'birthday' && updateFields.birthday && beforeUser.birthday) {
-    //       console.log(`- ${field}: ${beforeUser.birthday?.toISOString()} -> ${updateFields.birthday?.toISOString()}`);
-    //     } else {
-    //       console.log(`- ${field}: ${(beforeUser as any)[field]} -> ${(updatedUser as any)[field]}`);
-    //     }
-    //   });
-    // }
-
-    // The fallback logic using user.save() might be redundant if findByIdAndUpdate is working well
-    // with runValidators and new:true. If findByIdAndUpdate doesn't apply changes as expected,
-    // this block might be needed, but typically it's not.
-
-    return res.json(transformUserImageUrls(updatedUser));
+    return res.json(updatedUser); // <<< CORRECTED: Send raw updatedUser data
 
   } catch (err) {
-    console.error("Error updating profile:", err);
-    if (err instanceof mongoose.Error.ValidationError) {
-        return res.status(400).json({ message: "Validation failed", errors: err.errors });
+    const error = err as any; // Use 'any' to access potential Mongoose error properties
+    console.error("Error updating profile:", error.message, error.stack);
+    if (error.name === 'ValidationError' && error.errors) { // More specific check for Mongoose validation error
+        return res.status(400).json({ message: "Validation failed", errors: error.errors });
     }
-    return res.status(500).send('Server error');
+    return res.status(500).json({ message: 'Server error' }); // Changed to .json for consistency
   }
 };
 
-/**
- * @route   POST api/profile/picture  // <--- UPDATED PATH HERE
- * @desc    Upload profile picture
- * @access  Private (requires authentication)
- */
 export const uploadProfilePicture = async (req: Request, res: Response): Promise<Response> => {
   console.log('--- [Controller] uploadProfilePicture: Entered ---');
 
-  // Check if user is authenticated (req.user should be populated by auth middleware)
-  // req.user might have a more specific type based on your auth middleware
   if (!req.user || !(req.user as any).id) {
     console.error('[Controller] uploadProfilePicture: Error - User not authenticated or ID missing from req.user.');
     return res.status(401).json({ message: 'Not authorized. User ID missing.' });
   }
   const userId = (req.user as any).id;
 
-  // Check if a file was uploaded (req.file should be populated by multer middleware)
   if (!req.file) {
     console.error('[Controller] uploadProfilePicture: Error - No file uploaded.');
     return res.status(400).json({ message: 'No file uploaded. Please select an image.' });
   }
 
-  console.log(`[Controller] uploadProfilePicture: File received for user ${userId}:`, req.file.filename);
+  // When using multer-s3, file.key contains the S3 object key
+  // file.location contains the full S3 URL
+  // If S3_BUCKET_NAME is not set, your middleware falls back to local,
+  // in which case req.file.filename would be used by the s3UploadMiddleware.deleteFile's local path.
+  // We should primarily rely on the 'key' provided by multer-s3 or the filename for local.
+  // Your s3UploadMiddleware.deleteFile and getFileUrl handle the conditional logic.
+
+  const newFileIdentifier = (req.file as any).key || req.file.filename; // S3 key or local filename
+
+  console.log(`[Controller] uploadProfilePicture: File received for user ${userId}. Identifier: ${newFileIdentifier}`);
 
   try {
-    // Find the user in the database
     const userToUpdate = await User.findById(userId);
 
     if (!userToUpdate) {
       console.error(`[Controller] uploadProfilePicture: Error - User not found with ID: ${userId}`);
       // If user not found, the uploaded file is orphaned, attempt to delete it.
-      fs.unlink(req.file.path, (err) => {
-        if (err) console.error(`[Controller] uploadProfilePicture: Error deleting orphaned file ${req.file?.path}:`, err);
-        else console.log(`[Controller] uploadProfilePicture: Deleted orphaned file: ${req.file?.path}`);
-      });
+      // s3UploadMiddleware.deleteFile will handle if it's S3 or local
+      await s3UploadMiddleware.deleteFile(newFileIdentifier);
+      console.log(`[Controller] uploadProfilePicture: Cleaned up orphaned file: ${newFileIdentifier}`);
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Get the filename of the old profile picture
-    const oldProfilePictureFilename = userToUpdate.profilePicture;
+    const oldProfilePictureIdentifier = userToUpdate.profilePicture;
 
-    // Update the user's profilePicture field with the new filename from multer
-    userToUpdate.profilePicture = req.file.filename;
+    // Update user's profilePicture field with the new S3 key or local filename
+    userToUpdate.profilePicture = newFileIdentifier;
     await userToUpdate.save();
     console.log(`[Controller] uploadProfilePicture: User ${userToUpdate.username} profile picture updated in DB to: ${userToUpdate.profilePicture}`);
 
-    // If there was an old profile picture and it wasn't the default, delete it from the server
-    if (oldProfilePictureFilename && oldProfilePictureFilename !== 'default-avatar.png') {
-      // Construct the absolute path to the old picture
-      // __dirname is the directory of the current module (src/controllers)
-      // Adjust the relative path to '../../uploads/profile' accordingly
-      const oldPicturePath = path.join(__dirname, '../../uploads/profile', oldProfilePictureFilename);
-
-      if (fs.existsSync(oldPicturePath)) {
-        fs.unlink(oldPicturePath, (err) => {
-          if (err) {
-            console.error(`[Controller] uploadProfilePicture: Error deleting old profile picture ${oldPicturePath}:`, err);
-          } else {
-            console.log(`[Controller] uploadProfilePicture: Successfully deleted old profile picture: ${oldPicturePath}`);
-          }
-        });
+    // If there was an old profile picture and it wasn't a default, delete it
+    if (oldProfilePictureIdentifier && oldProfilePictureIdentifier !== 'default-avatar.png') {
+      console.log(`[Controller] uploadProfilePicture: Attempting to delete old profile picture: ${oldProfilePictureIdentifier}`);
+      const deleteSuccess = await s3UploadMiddleware.deleteFile(oldProfilePictureIdentifier);
+      if (deleteSuccess) {
+        console.log(`[Controller] uploadProfilePicture: Successfully deleted old profile picture: ${oldProfilePictureIdentifier}`);
       } else {
-        console.warn(`[Controller] uploadProfilePicture: Old profile picture not found at path: ${oldPicturePath}. Skipping delete.`);
+        console.warn(`[Controller] uploadProfilePicture: Failed or old profile picture not found for deletion: ${oldProfilePictureIdentifier}`);
       }
     }
 
-    // Construct the full URL for the newly uploaded profile picture
-    const newProfilePictureUrl = getFileUrl(userToUpdate.profilePicture, 'profile');
+    // Construct the full URL for the newly uploaded profile picture using your middleware's helper
+    const newProfilePictureUrl = s3UploadMiddleware.getFileUrl(userToUpdate.profilePicture);
 
     return res.status(200).json({
       message: 'Profile picture updated successfully',
-      profilePicture: userToUpdate.profilePicture, // The filename
+      profilePicture: userToUpdate.profilePicture, // The S3 key or local filename
       profilePictureUrl: newProfilePictureUrl     // The full URL for frontend use
     });
 
-  } catch (error) {
+  } catch (error: unknown) {
     const err = error as Error;
     console.error('[Controller] uploadProfilePicture: Server error during profile picture upload:', err.message, err.stack);
+
     // If an error occurs after file upload but before DB save, try to delete the uploaded file
-    if (req.file && req.file.path) {
-      fs.unlink(req.file.path, (unlinkErr) => {
-        if (unlinkErr) console.error(`[Controller] uploadProfilePicture: Error deleting file ${req.file?.path} after DB error:`, unlinkErr);
-        else console.log(`[Controller] uploadProfilePicture: Cleaned up file ${req.file?.path} after error.`);
-      });
+    if (req.file) {
+      // newFileIdentifier holds the key/filename from the current upload attempt
+      await s3UploadMiddleware.deleteFile(newFileIdentifier);
+      console.log(`[Controller] uploadProfilePicture: Cleaned up file ${newFileIdentifier} after error.`);
     }
     return res.status(500).json({ message: 'Server error during profile picture upload.' });
   }
@@ -655,71 +649,80 @@ export const uploadProfilePicture = async (req: Request, res: Response): Promise
  */
 export const uploadCoverPhoto = async (req: Request, res: Response): Promise<Response> => {
   console.log('--- [Controller] uploadCoverPhoto: Entered ---');
+
+  if (!req.user || !(req.user as any).id) {
+    console.error('[Controller] uploadCoverPhoto: Error - User not authenticated or ID missing.');
+    return res.status(401).json({ message: 'Not authorized. User ID missing.' });
+  }
+  const userId = (req.user as any).id;
+
+  if (!req.file) {
+    console.error('[Controller] uploadCoverPhoto: Error - No file uploaded.');
+    return res.status(400).json({ message: 'No file uploaded. Please select an image.' });
+  }
+
+  // When using multer-s3, file.key contains the S3 object key (e.g., "covers/filename.jpg")
+  // file.location contains the full S3 URL.
+  // If S3_BUCKET_NAME is not set, your middleware falls back to local,
+  // and req.file.filename would be the relevant identifier.
+  // newFileIdentifier will hold the S3 key or local filename.
+  const newFileIdentifier = (req.file as any).key || req.file.filename;
+
+  console.log(`[Controller] uploadCoverPhoto: File received for user ${userId}. Identifier: ${newFileIdentifier}`);
+
   try {
-    if (!req.user || !(req.user as any).id) {
-      console.error('[Controller] uploadCoverPhoto: Error - User not authenticated or ID missing.');
-      return res.status(401).json({ message: 'Not authorized. User ID missing.' });
-    }
-    const userId = (req.user as any).id;
-
-    if (!req.file) {
-      console.error('[Controller] uploadCoverPhoto: Error - No file uploaded.');
-      return res.status(400).json({ message: 'No file uploaded. Please select an image.' });
-    }
-    console.log(`[Controller] uploadCoverPhoto: File received for user ${userId}:`, req.file.filename);
-
     const userToUpdate = await User.findById(userId);
+
     if (!userToUpdate) {
       console.error(`[Controller] uploadCoverPhoto: Error - User not found with ID: ${userId}`);
-      fs.unlink(req.file.path, (err) => {
-        if (err) console.error(`[Controller] uploadCoverPhoto: Error deleting orphaned file ${req.file?.path}:`, err);
-        else console.log(`[Controller] uploadCoverPhoto: Deleted orphaned file: ${req.file?.path}`);
-      });
+      // If user not found, the uploaded file is orphaned, attempt to delete it.
+      // s3UploadMiddleware.deleteFile handles S3 or local deletion.
+      await s3UploadMiddleware.deleteFile(newFileIdentifier);
+      console.log(`[Controller] uploadCoverPhoto: Cleaned up orphaned file: ${newFileIdentifier}`);
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Delete old cover photo
-    const oldFilename = userToUpdate.coverPhoto;
-    if (oldFilename && oldFilename !== 'default-cover.png') {
-      const oldCoverPath = path.join(__dirname, '../../uploads/covers', oldFilename);
-      if (fs.existsSync(oldCoverPath)) {
-        fs.unlink(oldCoverPath, (unlinkErr) => { // Changed to async unlink
-          if (unlinkErr) console.error(`[Controller] uploadCoverPhoto: Error deleting old cover photo ${oldCoverPath}:`, unlinkErr);
-          else console.log(`[Controller] uploadCoverPhoto: Deleted old cover photo ${oldCoverPath}`);
-        });
-      } else {
-          console.warn(`[Controller] uploadCoverPhoto: Old cover photo not found at path: ${oldCoverPath}. Skipping delete.`);
-      }
-    }
+    const oldCoverPhotoIdentifier = userToUpdate.coverPhoto;
 
-    // Update user cover photo field with the new FILENAME
-    userToUpdate.coverPhoto = req.file.filename;
+    // Update user's coverPhoto field with the new S3 key or local filename
+    userToUpdate.coverPhoto = newFileIdentifier;
     await userToUpdate.save();
     console.log(`[Controller] uploadCoverPhoto: User ${userToUpdate.username} cover photo updated in DB to: ${userToUpdate.coverPhoto}`);
 
+    // If there was an old cover photo and it wasn't a default, delete it
+    if (oldCoverPhotoIdentifier && oldCoverPhotoIdentifier !== 'default-cover.png') {
+      console.log(`[Controller] uploadCoverPhoto: Attempting to delete old cover photo: ${oldCoverPhotoIdentifier}`);
+      const deleteSuccess = await s3UploadMiddleware.deleteFile(oldCoverPhotoIdentifier);
+      if (deleteSuccess) {
+        console.log(`[Controller] uploadCoverPhoto: Successfully deleted old cover photo: ${oldCoverPhotoIdentifier}`);
+      } else {
+        console.warn(`[Controller] uploadCoverPhoto: Failed or old cover photo not found for deletion: ${oldCoverPhotoIdentifier}`);
+      }
+    }
 
-    // Construct the full URL for the newly uploaded cover photo
-    const newCoverPhotoUrl = getFileUrl(userToUpdate.coverPhoto, 'cover');
+    // Construct the full URL for the newly uploaded cover photo using your middleware's helper
+    // Your getFileUrl function from s3UploadMiddleware will construct the correct S3 or local URL
+    // based on the key which includes the folder path (e.g., "covers/image.jpg")
+    const newCoverPhotoUrl = s3UploadMiddleware.getFileUrl(userToUpdate.coverPhoto);
 
-    // --- MODIFIED RESPONSE ---
     return res.status(200).json({
       message: 'Cover photo updated successfully',
-      coverPhoto: userToUpdate.coverPhoto, // Send back the FILENAME
-      coverPhotoUrl: newCoverPhotoUrl      // Send back the FULL URL
+      coverPhoto: userToUpdate.coverPhoto, // The S3 key or local filename
+      coverPhotoUrl: newCoverPhotoUrl      // The full URL for frontend use
     });
-    // -----------------------
 
-  } catch (err) {
-    const error = err as Error;
-    console.error('[Controller] uploadCoverPhoto: Error uploading cover photo:', error.message, error.stack);
-    // Cleanup potentially uploaded file on error
-    if (req.file && req.file.path) {
-      fs.unlink(req.file.path, (unlinkErr) => {
-        if (unlinkErr) console.error(`[Controller] uploadCoverPhoto: Error cleaning up failed upload ${req.file?.path}:`, unlinkErr);
-        else console.log(`[Controller] uploadCoverPhoto: Cleaned up failed upload: ${req.file?.path}`);
-      });
+  } catch (error: unknown) { // Changed 'err' to 'error' for consistency
+    const err = error as Error; // Keep using 'err' if you prefer, or change 'error' below
+    console.error('[Controller] uploadCoverPhoto: Server error during cover photo upload:', err.message, err.stack);
+
+    // If an error occurs after file upload but before DB save, try to delete the uploaded file
+    if (req.file) {
+      // newFileIdentifier holds the key/filename from the current upload attempt
+      await s3UploadMiddleware.deleteFile(newFileIdentifier);
+      console.log(`[Controller] uploadCoverPhoto: Cleaned up file ${newFileIdentifier} after error.`);
     }
-    return res.status(500).send('Server error during cover photo upload.');
+    // Changed send to json for consistency with other error responses
+    return res.status(500).json({ message: 'Server error during cover photo upload.' });
   }
 };
 
@@ -730,26 +733,31 @@ export const uploadCoverPhoto = async (req: Request, res: Response): Promise<Res
  */
 export const getFriends = async (req: Request, res: Response): Promise<Response> => {
   try {
-    if (!req.user) return res.status(401).json({ message: 'Not authorized' });
+    if (!req.user || !req.user.id) { // Added check for req.user.id for robustness
+      return res.status(401).json({ message: 'Not authorized' });
+    }
 
-    // Fetch user with populated friends, selecting necessary fields including image
-    const user = await User.findById(req.user.id)
-      .populate('friends', 'username firstName lastName profilePicture isOnline lastActive') // Select fields in populate
-      .select('friends') // Only select the friends array from the main user doc
-      .lean();
+    const userWithFriends = await User.findById(req.user.id)
+      // Populate the 'friends' field and select specific fields for each friend,
+      // including the raw 'profilePicture'.
+      .populate<{ friends: any[] }>('friends', 'username firstName lastName profilePicture isOnline lastActive') // Use any[] or a more specific IUser[] type
+      .select('friends') // Only select the friends array from the main user document
+      .lean(); // Get plain JavaScript objects
 
-    if (!user || !user.friends) return res.json([]); // Return empty if no user or no friends array
+    if (!userWithFriends || !userWithFriends.friends || userWithFriends.friends.length === 0) {
+      return res.json([]); // Return empty array if no user, no friends array, or no friends
+    }
 
-    // --- Transform image URLs before sending ---
-    // user.friends is now an array of populated friend objects
-    const transformedFriends = user.friends.map(transformUserImageUrls);
-    // -----------------------------------------
+    // The userWithFriends.friends array now contains plain JavaScript objects
+    // where each friend's profilePicture is the raw S3 key or default placeholder string.
+    // No transformation is needed here by the backend.
 
-    return res.json(transformedFriends);
+    return res.json(userWithFriends.friends); // <<< CORRECTED: Send the raw populated friends array
 
   } catch (err) {
-    console.error('Error in getFriends:', (err as Error).message);
-    return res.status(500).send('Server error');
+    const error = err as Error; // Cast for better error object access
+    console.error('Error in getFriends:', error.message, error.stack); // Added .stack
+    return res.status(500).json({ message: 'Server error' }); // Changed to .json for consistency
   }
 };
 
@@ -761,24 +769,31 @@ export const getFriends = async (req: Request, res: Response): Promise<Response>
  */
 export const getFriendRequests = async (req: Request, res: Response): Promise<Response> => {
   try {
-    if (!req.user) return res.status(401).json({ message: 'Not authorized' });
+    if (!req.user || !req.user.id) { // Added check for req.user.id
+      return res.status(401).json({ message: 'Not authorized' });
+    }
 
-    const user = await User.findById(req.user.id)
-      .populate('friendRequests', 'username firstName lastName profilePicture') // Select fields
-      .select('friendRequests')
-      .lean();
+    const userWithRequests = await User.findById(req.user.id)
+      // Populate the 'friendRequests' field, selecting necessary details for each requesting user,
+      // including their raw 'profilePicture'.
+      .populate<{ friendRequests: any[] }>('friendRequests', 'username firstName lastName profilePicture') // Use any[] or IUser[]
+      .select('friendRequests') // Only select the friendRequests array from the main user doc
+      .lean(); // Get plain JavaScript objects
 
-    if (!user || !user.friendRequests) return res.json([]);
+    if (!userWithRequests || !userWithRequests.friendRequests || userWithRequests.friendRequests.length === 0) {
+      return res.json([]); // Return empty array if no user, no friendRequests array, or no requests
+    }
 
-    // --- Transform image URLs before sending ---
-    const transformedRequests = user.friendRequests.map(transformUserImageUrls);
-    // -----------------------------------------
+    // The userWithRequests.friendRequests array now contains plain JavaScript objects
+    // where each requesting user's profilePicture is the raw S3 key or default placeholder string.
+    // No transformation by the backend is needed here.
 
-    return res.json(transformedRequests);
+    return res.json(userWithRequests.friendRequests); // <<< CORRECTED: Return the actual data
 
   } catch (err) {
-    console.error('Error in getFriendRequests:', (err as Error).message);
-    return res.status(500).send('Server error');
+    const error = err as Error; // Cast for better error object access
+    console.error('Error in getFriendRequests:', error.message, error.stack); // Added .stack for more debug info
+    return res.status(500).json({ message: 'Server error' }); // Changed to .json for consistency
   }
 };
 
@@ -803,24 +818,28 @@ export const unblockUser = async ( /* ... */ ) => { /* ... */ };
  */
 export const getBlockedUsers = async (req: Request, res: Response): Promise<Response> => {
   try {
-    if (!req.user) return res.status(401).json({ message: 'Not authorized' });
+    if (!req.user || !req.user.id) { // Added check for req.user.id for completeness
+      return res.status(401).json({ message: 'Not authorized' });
+    }
 
     const user = await User.findById(req.user.id)
-      .populate('blockedUsers', 'username firstName lastName profilePicture') // Select fields
+      .populate<{ blockedUsers: any[] }>('blockedUsers', 'username firstName lastName profilePicture') // Explicitly type populated field
       .select('blockedUsers')
       .lean();
 
-    if (!user || !user.blockedUsers) return res.json([]);
+    if (!user || !user.blockedUsers) {
+      return res.json([]); // Return empty array if no user or no blockedUsers array
+    }
 
-    // --- Transform image URLs before sending ---
-    const transformedBlocked = user.blockedUsers.map(transformUserImageUrls);
-    // -----------------------------------------
+    // The user.blockedUsers array now contains plain JavaScript objects
+    // with profilePicture as the raw S3 key or default placeholder string.
+    // No transformation is needed here.
 
-    return res.json(transformedBlocked);
+    return res.json(user.blockedUsers); // <<< CORRECTED: Return the actual data
 
   } catch (err) {
-    console.error('Error in getBlockedUsers:', (err as Error).message);
-    return res.status(500).send('Server error');
+    console.error('Error in getBlockedUsers:', (err as Error).message, (err as Error).stack); // Added stack for more debug info
+    return res.status(500).json({ message: 'Server error' }); // Changed to .json for consistency
   }
 };
 
@@ -843,11 +862,8 @@ export const getOnlineFriends = async (req: Request, res: Response): Promise<Res
     }).select('username firstName lastName profilePicture lastActive') // Select fields
       .lean();
 
-    // --- Transform image URLs before sending ---
-    const transformedOnlineFriends = onlineFriends.map(transformUserImageUrls);
-    // -----------------------------------------
 
-    return res.json(transformedOnlineFriends);
+    return res.json(onlineFriends);
 
   } catch (err) {
     console.error('Error in getOnlineFriends:', (err as Error).message);
