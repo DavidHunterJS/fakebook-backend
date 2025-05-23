@@ -14,8 +14,10 @@ export interface ICommentReportReason {
 
 /**
  * Interface for comment replies
+ * ADDED _id, createdAt, and updatedAt
  */
 export interface IReply extends Document {
+  _id: mongoose.Types.ObjectId; // Explicitly add _id for consistency
   user: IUser['_id'];
   text: string;
   likes: IUser['_id'][];
@@ -43,6 +45,7 @@ export interface IComment extends Document {
 
 /**
  * Schema for reply objects within comments
+ * No changes needed here as 'timestamps: true' handles createdAt/updatedAt and _id is default.
  */
 const ReplySchema = new Schema<IReply>(
   {
@@ -61,7 +64,7 @@ const ReplySchema = new Schema<IReply>(
       ref: 'User'
     }]
   },
-  { timestamps: true }
+  { timestamps: true } // This automatically adds createdAt and updatedAt, and _id is default
 );
 
 /**
@@ -142,7 +145,7 @@ CommentSchema.post('save', async function(this: IComment) {
  */
 CommentSchema.post('findOneAndDelete', async function(doc: IComment) {
   if (!doc) return;
-  
+
   try {
     const Post = mongoose.model('Post');
     await Post.findByIdAndUpdate(doc.post, {
@@ -169,14 +172,18 @@ CommentSchema.virtual('likeCount').get(function(this: IComment) {
 
 /**
  * Method to add a reply to a comment
+ * The 'newReply' object in your controller will now correctly match IReply
  */
 CommentSchema.methods.addReply = async function(userId: string, text: string): Promise<IComment> {
   this.replies.push({
+    _id: new mongoose.Types.ObjectId(), // Ensure _id is generated for replies added via method
     user: userId,
     text,
-    likes: []
+    likes: [],
+    createdAt: new Date(), // Add timestamps manually for method if not relying on direct push
+    updatedAt: new Date()
   });
-  
+
   return this.save();
 };
 
@@ -185,7 +192,7 @@ CommentSchema.methods.addReply = async function(userId: string, text: string): P
  */
 CommentSchema.methods.toggleLike = async function(userId: string): Promise<IComment> {
   const userIdStr = userId.toString();
-  
+
   if (this.likes.some((id: mongoose.Types.ObjectId) => id.toString() === userIdStr)) {
     // User already liked this comment, so unlike it
     this.likes = this.likes.filter((id: mongoose.Types.ObjectId) => id.toString() !== userIdStr);
@@ -193,7 +200,7 @@ CommentSchema.methods.toggleLike = async function(userId: string): Promise<IComm
     // User hasn't liked this comment yet, so add the like
     this.likes.push(userId);
   }
-  
+
   return this.save();
 };
 
@@ -205,17 +212,17 @@ CommentSchema.methods.report = async function(userId: string, reason: string): P
   const alreadyReported = this.reportReasons.some(
     (report: ICommentReportReason) => report.user.toString() === userId.toString()
   );
-  
+
   if (!alreadyReported) {
     this.reportReasons.push({
       user: userId,
       reason,
       date: new Date()
     });
-    
+
     this.reported = true;
   }
-  
+
   return this.save();
 };
 

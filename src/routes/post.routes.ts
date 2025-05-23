@@ -6,8 +6,8 @@ import authMiddleware from '../middlewares/auth.middleware';
 import uploadMiddleware from '../middlewares/upload.middleware';
 import { hasPermission } from '../middlewares/role.middleware';
 import { Permission } from '../config/roles';
-import auth from '../middlewares/auth.middleware';
 import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
+import { FileWithS3 } from '../types/file.types';
 
 const router: Router = express.Router();
 

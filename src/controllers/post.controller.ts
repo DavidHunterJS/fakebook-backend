@@ -12,6 +12,7 @@ import { NotificationService } from '../services/notification.service';
 import { IUser } from '../types/user.types'; // Adjust path
 import { S3UploadRequest, FileWithS3 } from '../types/file.types';
 import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
+
 interface PaginationQuery { page?: string; limit?: string; }
 
 // Import or define transformUserImageUrls helper
@@ -59,6 +60,7 @@ interface PostIdParam {
   postId: string;
 }
 
+
 /**
  * Create a new post
  * @route POST /api/posts
@@ -73,36 +75,36 @@ export const createPost = async (req: Request, res: Response): Promise<void> => 
     }
 
     // Ensure user is authenticated
-    if (!req.user || !req.user.id) {
+    if (!req.user || !req.user._id) { // Use req.user._id for consistency with Mongoose
       res.status(401).json({ error: 'User not authenticated' });
       return;
     }
-    
-    const userId = req.user.id;
+
+    const userId = req.user._id; // Use _id here
     const { text = '', visibility = PostVisibility.PUBLIC } = req.body;
-    
+
     // Check if there's either text or media
     if ((!text || text.trim() === '') && (!req.files || !Array.isArray(req.files) || req.files.length === 0)) {
       res.status(400).json({ error: 'Post must contain either text or media' });
       return;
     }
-    
+
     // Process media files from S3 upload
     const files = req.files as Express.Multer.File[] | undefined;
-    
+
     // Create media objects that match your MediaItem schema
     const mediaItems: MediaItem[] = files ? files.map(file => {
       // Get file info
       const key = ((file as any).key as string) || `posts/${file.filename}`;
-      const url = ((file as any).location as string) || 
+      const url = ((file as any).location as string) ||
                  `http://localhost:5000/uploads/${key}`;
-      
+
       // Determine media type based on mimetype
       let type = 'document';
       if (file.mimetype?.startsWith('image/')) type = 'image';
       else if (file.mimetype?.startsWith('video/')) type = 'video';
       else if (file.mimetype?.startsWith('audio/')) type = 'audio';
-      
+
       // Create media item object that matches the schema
       return {
         url,
@@ -111,42 +113,75 @@ export const createPost = async (req: Request, res: Response): Promise<void> => 
         originalFilename: file.originalname
       };
     }) : [];
-    
+
     console.log('Media items:', JSON.stringify(mediaItems, null, 2));
-    
+
     // Create a new post with the media items
     const newPost = new Post({
       user: userId,
-      text: text || "Post with media",
+      text: text || (mediaItems.length > 0 ? "Post with media" : ""), // Ensure text is not empty if only media
       media: mediaItems,
       visibility
     });
-    
+
     console.log('New post object before save:', {
       user: newPost.user,
       text: newPost.text,
       mediaCount: newPost.media?.length || 0,
       mediaItems: newPost.media
     });
-    
+
     // Save the post
     const savedPost = await newPost.save();
-    
+
     // Populate user information for response
     await savedPost.populate('user', 'username firstName lastName profilePicture');
-    
-    res.status(201).json({ 
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION START
+    // ==========================================================
+
+    // 1. Detect mentions in the post text
+    const mentionedUsernames = text.match(/@(\w+)/g); // Finds all @username patterns
+
+    if (mentionedUsernames && mentionedUsernames.length > 0) {
+      // Extract unique usernames and remove the '@' prefix
+      const uniqueMentionedUsernames = [...new Set(mentionedUsernames.map((m: string) => m.substring(1)))];
+
+      // Find the IDs of the mentioned users
+      const mentionedUsers = await User.find({
+        username: { $in: uniqueMentionedUsernames }
+      }).select('_id');
+
+      // Send a notification for each mentioned user
+      for (const mentionedUser of mentionedUsers) {
+        // Ensure the mentioner is not notifying themselves
+        if (mentionedUser._id.toString() !== userId.toString()) {
+          await NotificationService.mention(
+            userId.toString(), // The user who made the post (mentioner)
+            mentionedUser._id.toString(), // The user who was mentioned
+            savedPost._id.toString() // The ID of the post where the mention occurred
+          );
+        }
+      }
+    }
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION END
+    // ==========================================================
+
+    res.status(201).json({
       message: 'Post created successfully',
       post: savedPost
     });
   } catch (error: unknown) {
     console.error('Error creating post:', error);
-    
+
     // Add more detailed error logging
     if (error instanceof Error) {
       console.error('Error name:', error.name);
       console.error('Error message:', error.message);
-      
+
       // Log mongoose validation errors in detail
       if ((error as any).errors) {
         Object.keys((error as any).errors).forEach(key => {
@@ -154,10 +189,11 @@ export const createPost = async (req: Request, res: Response): Promise<void> => 
         });
       }
     }
-    
+
     res.status(500).json({ error: 'Server error' });
   }
 };
+
 
 /**
  * Get all posts (with pagination)
@@ -619,20 +655,21 @@ export const likePost = async (
   res: Response
 ): Promise<Response> => {
   try {
-    const { postId } = req.params;
-    const userId = req.user!.id;
-
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
 
-    if (!req.user) {
+    if (!req.user || !req.user._id) { // Use _id and ensure req.user exists
       return res.status(401).json({ message: 'Not authorized' });
     }
 
+    // Use req.params.id directly and capture likerId
+    const postId = req.params.id; // Use this instead of destructuring from params again
+    const likerId = req.user._id; // The ID of the user liking the post
+
     // Find post
-    const post = await Post.findById(req.params.id);
+    const post = await Post.findById(postId); // Use postId from params
     if (!post) {
       return res.status(404).json({ message: 'Post not found' });
     }
@@ -644,22 +681,22 @@ export const likePost = async (
     }
 
     // Get current user
-    const currentUser = await User.findById(req.user.id);
+    const currentUser = await User.findById(likerId); // Use likerId
     if (!currentUser) {
       return res.status(404).json({ message: 'Current user not found' });
     }
 
     // Check if either user has blocked the other
-    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
-    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner._id.toString()); // Use _id for comparison
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === likerId.toString()); // Use likerId for comparison
 
     if (isBlocked || hasBlocked) {
       return res.status(403).json({ message: 'Cannot interact with this post' });
     }
 
     // Check post visibility
-    const isOwner = post.user.toString() === req.user.id;
-    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+    const isOwner = post.user.toString() === likerId.toString(); // Use likerId for comparison
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner._id.toString()); // Use _id for comparison
 
     if (!isOwner && post.visibility === 'private') {
       return res.status(403).json({ message: 'This post is private' });
@@ -670,17 +707,29 @@ export const likePost = async (
     }
 
     // Check if post is already liked
-    if (post.likes.some(like => like.toString() === req.user!.id)) {
+    if (post.likes.some(like => like.toString() === likerId.toString())) { // Use likerId for comparison
       return res.status(400).json({ message: 'Post already liked' });
     }
 
     // Add like
-    post.likes.push(req.user.id);
+    post.likes.push(likerId); // Use likerId
     await post.save();
-        // Send notification if you're not liking your own post
-        if (post.user.toString() !== userId) {
-          await NotificationService.postLike(userId, post.user.toString(), postId);
-        }
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION START
+    // ==========================================================
+    // Send notification if you're not liking your own post
+    if (post.user.toString() !== likerId.toString()) { // Use likerId for consistency
+      await NotificationService.postLike(
+        likerId.toString(),        // The user who liked the post
+        post.user.toString(),      // The author of the post
+        postId.toString()          // The ID of the post that was liked
+      );
+    }
+    // ==========================================================
+    // NOTIFICATION INTEGRATION END
+    // ==========================================================
+
     return res.json({ message: 'Post liked', likes: post.likes.length });
   } catch (err) {
     console.error((err as Error).message);
@@ -829,6 +878,8 @@ export const getPostLikes = async (
   }
 };
 
+
+
 /**
  * @route   POST api/posts/:id/comment
  * @desc    Add a comment to a post
@@ -844,10 +895,11 @@ export const addComment = async (
       return res.status(400).json({ errors: errors.array() });
     }
 
-    if (!req.user) {
+    if (!req.user || !req.user._id) { // Use _id for consistency
       return res.status(401).json({ message: 'Not authorized' });
     }
 
+    const commenterId = req.user._id; // The ID of the user commenting
     const { text } = req.body;
 
     // Find post
@@ -862,23 +914,23 @@ export const addComment = async (
       return res.status(404).json({ message: 'Post owner not found' });
     }
 
-    // Get current user
-    const currentUser = await User.findById(req.user.id);
+    // Get current user (commenter)
+    const currentUser = await User.findById(commenterId); // Use commenterId here
     if (!currentUser) {
       return res.status(404).json({ message: 'Current user not found' });
     }
 
     // Check if either user has blocked the other
-    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
-    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner._id.toString()); // Use _id
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === commenterId.toString()); // Use _id
 
     if (isBlocked || hasBlocked) {
       return res.status(403).json({ message: 'Cannot interact with this post' });
     }
 
     // Check post visibility
-    const isOwner = post.user.toString() === req.user.id;
-    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+    const isOwner = post.user.toString() === commenterId.toString(); // Use _id
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner._id.toString()); // Use _id
 
     if (!isOwner && post.visibility === 'private') {
       return res.status(403).json({ message: 'This post is private' });
@@ -890,7 +942,7 @@ export const addComment = async (
 
     // Create new comment
     const newComment = new Comment({
-      user: req.user.id,
+      user: commenterId, // Use commenterId here
       post: post._id,
       text
     });
@@ -901,13 +953,61 @@ export const addComment = async (
     const populatedComment = await Comment.findById(savedComment._id)
       .populate('user', 'username firstName lastName profilePicture');
 
+    // ==========================================================
+    // NOTIFICATION INTEGRATION START
+    // ==========================================================
+
+    // 1. Notify the Post Author that someone commented on their post
+    // Only send if the commenter is not the post author
+    if (commenterId.toString() !== post.user.toString()) {
+      await NotificationService.postComment(
+        commenterId.toString(),        // The user who commented
+        post.user.toString(),         // The author of the post
+        post._id.toString(),          // The ID of the post
+        savedComment._id.toString()   // The ID of the new comment
+      );
+    }
+
+    // 2. Detect and notify mentioned users in the comment text
+    const mentionedUsernames = text.match(/@(\w+)/g); // Finds all @username patterns
+
+    if (mentionedUsernames && mentionedUsernames.length > 0) {
+      // Extract unique usernames and remove the '@' prefix
+      const uniqueMentionedUsernames = [...new Set(mentionedUsernames.map((m: string) => m.substring(1)))];
+
+      // Find the IDs of the mentioned users
+      const mentionedUsers = await User.find({
+        username: { $in: uniqueMentionedUsernames }
+      }).select('_id');
+
+      // Send a notification for each mentioned user
+      for (const mentionedUser of mentionedUsers) {
+        // Ensure the commenter is not notifying themselves
+        // And also ensure the mentioned user is not the post author
+        // (as they already get a POST_COMMENT notification)
+        if (
+          mentionedUser._id.toString() !== commenterId.toString() &&
+          mentionedUser._id.toString() !== post.user.toString() // Avoid double notification if post author is mentioned
+        ) {
+          await NotificationService.mention(
+            commenterId.toString(),         // The user who made the comment (mentioner)
+            mentionedUser._id.toString(),  // The user who was mentioned
+            post._id.toString()            // The ID of the post
+          );
+        }
+      }
+    }
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION END
+    // ==========================================================
+
     return res.status(201).json(populatedComment);
   } catch (err) {
     console.error((err as Error).message);
     return res.status(500).send('Server error');
   }
 };
-
 /**
  * @route   GET api/posts/:id/comments
  * @desc    Get comments for a post
@@ -1150,6 +1250,7 @@ export const deleteComment = async (
   }
 };
 
+
 /**
  * @route   POST api/posts/comment/:commentId/like
  * @desc    Like a comment
@@ -1165,9 +1266,11 @@ export const likeComment = async (
       return res.status(400).json({ errors: errors.array() });
     }
 
-    if (!req.user) {
+    if (!req.user || !req.user._id) { // Use _id for consistency
       return res.status(401).json({ message: 'Not authorized' });
     }
+
+    const likerId = req.user._id; // The ID of the user liking the comment
 
     // Find comment
     const comment = await Comment.findById(req.params.commentId);
@@ -1175,8 +1278,8 @@ export const likeComment = async (
       return res.status(404).json({ message: 'Comment not found' });
     }
 
-    // Check if comment is already liked
-    if (comment.likes.some(like => like.toString() === req.user!.id)) {
+    // Check if comment is already liked by the current user
+    if (comment.likes.some(like => like.toString() === likerId.toString())) { // Use likerId for comparison
       return res.status(400).json({ message: 'Comment already liked' });
     }
 
@@ -1193,22 +1296,22 @@ export const likeComment = async (
     }
 
     // Get current user
-    const currentUser = await User.findById(req.user.id);
+    const currentUser = await User.findById(likerId); // Use likerId
     if (!currentUser) {
       return res.status(404).json({ message: 'Current user not found' });
     }
 
     // Check if either user has blocked the other
-    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
-    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner._id.toString()); // Use _id
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === likerId.toString()); // Use likerId
 
     if (isBlocked || hasBlocked) {
       return res.status(403).json({ message: 'Cannot interact with this post' });
     }
 
     // Check post visibility
-    const isOwner = post.user.toString() === req.user.id;
-    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+    const isOwner = post.user.toString() === likerId.toString(); // Use likerId
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner._id.toString()); // Use _id
 
     if (!isOwner && post.visibility === 'private') {
       return res.status(403).json({ message: 'This post is private' });
@@ -1219,8 +1322,27 @@ export const likeComment = async (
     }
 
     // Add like
-    comment.likes.push(req.user.id);
+    comment.likes.push(likerId); // Use likerId
     await comment.save();
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION START
+    // ==========================================================
+
+    // Send a COMMENT_LIKE notification to the original comment author
+    // Only send if the liker is not the comment author
+    if (likerId.toString() !== comment.user.toString()) {
+        await NotificationService.commentLike(
+            likerId.toString(),         // The user who liked the comment
+            comment.user.toString(),    // The author of the original comment
+            post._id.toString(),        // The ID of the post the comment belongs to
+            comment._id.toString()      // The ID of the comment that was liked
+        );
+    }
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION END
+    // ==========================================================
 
     return res.json({ message: 'Comment liked', likes: comment.likes.length });
   } catch (err) {
@@ -1876,6 +1998,7 @@ export const getTrendingPosts = async (
   }
 };
 
+
 /**
  * @route   POST api/posts/comment/:commentId/reply
  * @desc    Reply to a comment
@@ -1891,10 +2014,11 @@ export const replyToComment = async (
       return res.status(400).json({ errors: errors.array() });
     }
 
-    if (!req.user) {
+    if (!req.user || !req.user._id) { // Use _id for consistency
       return res.status(401).json({ message: 'Not authorized' });
     }
 
+    const replierId = req.user._id; // The ID of the user replying
     const { text } = req.body;
 
     // Find comment
@@ -1915,23 +2039,23 @@ export const replyToComment = async (
       return res.status(404).json({ message: 'Post owner not found' });
     }
 
-    // Get current user
-    const currentUser = await User.findById(req.user.id);
+    // Get current user (replier)
+    const currentUser = await User.findById(replierId); // Use replierId here
     if (!currentUser) {
       return res.status(404).json({ message: 'Current user not found' });
     }
 
     // Check if either user has blocked the other
-    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
-    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner._id.toString()); // Use _id
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === replierId.toString()); // Use _id
 
     if (isBlocked || hasBlocked) {
       return res.status(403).json({ message: 'Cannot interact with this post' });
     }
 
     // Check post visibility
-    const isOwner = post.user.toString() === req.user.id;
-    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id.toString());
+    const isOwner = post.user.toString() === replierId.toString(); // Use _id
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner._id.toString()); // Use _id
 
     if (!isOwner && post.visibility === 'private') {
       return res.status(403).json({ message: 'This post is private' });
@@ -1942,25 +2066,84 @@ export const replyToComment = async (
     }
 
     // Add reply to comment
+    // Ensure the user field of the new reply is correctly typed as ObjectId
     const newReply = {
-      user: req.user.id,
+      _id: new mongoose.Types.ObjectId(), // Generate a new ObjectId for the reply
+      user: replierId, // Use replierId here
       text,
-      likes: []
+      likes: [],
+      createdAt: new Date(),
+      updatedAt: new Date()
     };
 
-    comment.replies.push({
-        user: req.user.id,
-        text,
-        likes: []
-      } as any);
+    comment.replies.push(newReply as any); // Cast to any to bypass strict type checking if needed for now
     await comment.save();
 
-    // Get the added reply with user info
+    // Get the added reply with populated user info
+    // Fetch the entire comment again to ensure proper population of the new reply
     const updatedComment = await Comment.findById(comment._id)
       .populate('user', 'username firstName lastName profilePicture')
       .populate('replies.user', 'username firstName lastName profilePicture');
 
-    const addedReply = updatedComment?.replies[updatedComment.replies.length - 1];
+    const addedReply = updatedComment?.replies.find(
+      (reply: any) => reply._id.toString() === newReply._id.toString()
+    ); // Find the newly added reply
+
+    if (!addedReply) {
+      // This should ideally not happen if save and findById worked
+      console.error('Error: Could not find the newly added reply after save and populate.');
+      return res.status(500).send('Server error: Reply not found after creation.');
+    }
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION START
+    // ==========================================================
+
+    // 1. Notify the original Comment Author that someone replied to their comment
+    // Only send if the replier is not the original comment author
+    if (replierId.toString() !== comment.user.toString()) {
+      await NotificationService.commentReply(
+        replierId.toString(),         // The user who replied
+        comment.user.toString(),      // The author of the original comment
+        post._id.toString(),          // The ID of the post the comment belongs to
+        comment._id.toString(),       // The ID of the original comment
+        addedReply._id.toString()     // The ID of the new reply
+      );
+    }
+
+    // 2. Detect and notify mentioned users in the reply text
+    const mentionedUsernames = text.match(/@(\w+)/g); // Finds all @username patterns
+
+    if (mentionedUsernames && mentionedUsernames.length > 0) {
+      // Extract unique usernames and remove the '@' prefix
+      const uniqueMentionedUsernames = [...new Set(mentionedUsernames.map((m: string) => m.substring(1)))];
+
+      // Find the IDs of the mentioned users
+      const mentionedUsers = await User.find({
+        username: { $in: uniqueMentionedUsernames }
+      }).select('_id');
+
+      // Send a notification for each mentioned user
+      for (const mentionedUser of mentionedUsers) {
+        // Ensure the replier is not notifying themselves
+        // And also ensure the mentioned user is not the original comment author
+        // (as they might already get a COMMENT_REPLY notification)
+        if (
+          mentionedUser._id.toString() !== replierId.toString() &&
+          mentionedUser._id.toString() !== comment.user.toString() // Avoid double notification if comment author is mentioned
+        ) {
+          await NotificationService.mention(
+            replierId.toString(),         // The user who made the reply (mentioner)
+            mentionedUser._id.toString(), // The user who was mentioned
+            post._id.toString()           // The ID of the post
+          );
+        }
+      }
+    }
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION END
+    // ==========================================================
 
     return res.status(201).json(addedReply);
   } catch (err) {
@@ -1968,7 +2151,6 @@ export const replyToComment = async (
     return res.status(500).send('Server error');
   }
 };
-
 /**
  * @route   GET api/posts/comment/:commentId/replies
  * @desc    Get replies to a comment
@@ -2198,6 +2380,10 @@ export const unpinPost = async (
   }
 };
 
+interface PostIdParam {
+  id: string;
+}
+
 /**
  * @route   POST api/posts/:id/tag
  * @desc    Tag users in a post
@@ -2213,10 +2399,11 @@ export const tagUsers = async (
       return res.status(400).json({ errors: errors.array() });
     }
 
-    if (!req.user) {
+    if (!req.user || !req.user._id) { // Use _id for consistency
       return res.status(401).json({ message: 'Not authorized' });
     }
 
+    const taggerId = req.user._id; // The ID of the user doing the tagging
     const { userIds } = req.body;
 
     // Find post
@@ -2226,26 +2413,28 @@ export const tagUsers = async (
     }
 
     // Check if user owns the post
-    if (post.user.toString() !== req.user.id) {
+    if (post.user.toString() !== taggerId.toString()) { // Use _id for comparison
       return res.status(403).json({ message: 'Can only tag users in your own posts' });
     }
 
     // Check if users exist and are not blocked
-    const currentUser = await User.findById(req.user.id);
+    const currentUser = await User.findById(taggerId); // Use taggerId
     if (!currentUser) {
       return res.status(404).json({ message: 'Current user not found' });
     }
 
     // Get blocked users
     const blockedUserIds = currentUser.blockedUsers.map(id => id.toString());
-    const usersWhoBlockedMe = await User.find({ blockedUsers: req.user.id }).select('_id');
+    const usersWhoBlockedMe = await User.find({ blockedUsers: taggerId }).select('_id'); // Use taggerId
     const excludedUserIds = [
       ...blockedUserIds,
       ...usersWhoBlockedMe.map(user => user._id.toString())
     ];
 
+    const newTaggedUserIds: string[] = []; // To store IDs of users who are actually newly tagged
+
     // Filter out invalid user IDs
-    const validUserIds = [];
+    const validUserIdsToAdd: mongoose.Types.ObjectId[] = [];
     for (const userId of userIds) {
       // Skip if user is already tagged
       if (post.tags.some(tag => tag.toString() === userId)) {
@@ -2257,24 +2446,45 @@ export const tagUsers = async (
         continue;
       }
 
+      // Skip if tagging self (post owner)
+      if (userId.toString() === taggerId.toString()) {
+          continue;
+      }
+
       // Check if user exists
       const userExists = await User.exists({ _id: userId });
       if (userExists) {
-        validUserIds.push(userId);
+        validUserIdsToAdd.push(new mongoose.Types.ObjectId(userId));
+        newTaggedUserIds.push(userId); // Add to our list for notifications
       }
     }
 
     // Add valid users to tags
-    // Map with explicit type casting
-    post.tags.push(...validUserIds.map(id => {
-        const objectId = new mongoose.Types.ObjectId(id);
-        return objectId as any; // Cast each ObjectId
-    }));
+    post.tags.push(...validUserIdsToAdd);
     await post.save();
 
     // Get updated post with tags
     const updatedPost = await Post.findById(post._id)
       .populate('tags', 'username firstName lastName profilePicture');
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION START
+    // ==========================================================
+
+    // Send a MENTION notification for each newly tagged user
+    for (const taggedUserId of newTaggedUserIds) {
+        // The NotificationService.mention already has a check for self-mention,
+        // but we've also added it in the filtering above for clarity and efficiency.
+        await NotificationService.mention(
+            taggerId.toString(),        // The user who did the tagging
+            taggedUserId,               // The user who was tagged
+            post._id.toString()         // The ID of the post
+        );
+    }
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION END
+    // ==========================================================
 
     return res.json({
       message: 'Users tagged in post',

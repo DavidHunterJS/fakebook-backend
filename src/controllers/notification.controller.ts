@@ -73,7 +73,7 @@ export const getUserNotifications = async (req: Request, res: Response) => {
      .sort({ createdAt: -1 })
      .skip(skip)
      .limit(limit)
-     .populate('sender', 'name username profileImage')
+     .populate('sender', 'username profileImage profilePicture')
      .lean();
 
    console.log(`Found ${notifications.length} notifications`);
@@ -111,7 +111,7 @@ export const getUserNotifications = async (req: Request, res: Response) => {
 export const markNotificationRead = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const userId = req.user?.id;
+    const userId = req.user?._id;
 
     const notification = await Notification.findOne({
       _id: id,
@@ -139,7 +139,7 @@ export const markNotificationRead = async (req: Request, res: Response) => {
  */
 export const markAllNotificationsRead = async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
+    const userId = req.user?._id;
 
     await Notification.updateMany(
       { recipient: userId, read: false },
@@ -161,7 +161,7 @@ export const markAllNotificationsRead = async (req: Request, res: Response) => {
 export const deleteNotification = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const userId = req.user?.id;
+    const userId = req.user?._id;
 
     const notification = await Notification.findOne({
       _id: id,
@@ -188,7 +188,7 @@ export const deleteNotification = async (req: Request, res: Response) => {
  */
 export const clearReadNotifications = async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
+    const userId = req.user?._id;
 
     const result = await Notification.deleteMany({
       recipient: userId,
@@ -212,7 +212,7 @@ export const clearReadNotifications = async (req: Request, res: Response) => {
  */
 export const getUnreadCount = async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
+    const userId = req.user?._id;
 
     const count = await Notification.countDocuments({
       recipient: userId,
@@ -237,7 +237,7 @@ export const sendTestNotification = async (req: Request, res: Response) => {
       return res.status(403).json({ message: 'Not available in production' });
     }
 
-    const userId = req.user?.id;
+    const userId = req.user?._id;
     const { type, content } = req.body;
 
     if (!Object.values(NotificationType).includes(type as NotificationType)) {
