@@ -64,8 +64,8 @@ export const getPostComments = async (req: Request, res: Response) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate('user', 'name profileImage')
-      .populate('replies.user', 'name profileImage')
+      .populate('user', 'username profileImage profilePicture')
+      .populate('replies.user', 'username profileImage profilePicture')
       .lean();
 
     const total = await Comment.countDocuments({ post: postId });
