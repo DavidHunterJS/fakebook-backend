@@ -4,6 +4,10 @@ import Comment, { IComment } from '../models/Comment';
 import Post from '../models/Post';
 import mongoose from 'mongoose';
 import { NotificationService } from '../services/notification.service';
+import User from '../models/User'; // <--- You'll need this import for User model
+
+
+
 
 /**
  * @desc    Create a new comment
@@ -13,8 +17,11 @@ import { NotificationService } from '../services/notification.service';
 export const createComment = async (req: Request, res: Response) => {
   try {
     const { postId, text } = req.body;
-    const userId = req.user?.id;
-    
+    const commenterId = req.user?._id; // <--- Use _id for consistency
+
+    if (!commenterId) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
 
     if (!postId || !text) {
       return res.status(400).json({ message: 'Post ID and comment text are required' });
@@ -27,19 +34,69 @@ export const createComment = async (req: Request, res: Response) => {
     }
 
     const comment = new Comment({
-      user: userId,
+      user: commenterId, // <--- Use commenterId here
       post: postId,
       text,
       likes: [],
       replies: []
     });
 
-    await comment.save();
+    const savedComment = await comment.save(); // <--- Capture the saved comment
 
-    // Populate user details
-    const populatedComment = await Comment.findById(comment._id)
-      .populate('user', 'name profileImage')
+    // Populate user details for response
+    // IMPORTANT: Ensure you populate 'username', 'profileImage', 'profilePicture' for frontend needs
+    const populatedComment = await Comment.findById(savedComment._id)
+      .populate('user', 'username profileImage profilePicture') // <--- Updated populate fields
       .lean();
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION START
+    // ==========================================================
+
+    // 1. Notify the Post Author that someone commented on their post
+    // Only send if the commenter is not the post author
+    if (commenterId.toString() !== post.user.toString()) {
+      await NotificationService.postComment(
+        commenterId.toString(),        // The user who commented
+        post.user.toString(),         // The author of the post
+        post._id.toString(),          // The ID of the post
+        savedComment._id.toString()   // The ID of the new comment
+      );
+    }
+
+    // 2. Detect and notify mentioned users in the comment text
+    const mentionedUsernames = text.match(/@(\w+)/g); // Finds all @username patterns
+
+    if (mentionedUsernames && mentionedUsernames.length > 0) {
+      // Extract unique usernames and remove the '@' prefix
+      const uniqueMentionedUsernames = [...new Set(mentionedUsernames.map((m: string) => m.substring(1)))];
+
+      // Find the IDs of the mentioned users
+      const mentionedUsers = await User.find({
+        username: { $in: uniqueMentionedUsernames }
+      }).select('_id');
+
+      // Send a notification for each mentioned user
+      for (const mentionedUser of mentionedUsers) {
+        // Ensure the commenter is not notifying themselves
+        // And also ensure the mentioned user is not the post author
+        // (as they already get a POST_COMMENT notification)
+        if (
+          mentionedUser._id.toString() !== commenterId.toString() &&
+          mentionedUser._id.toString() !== post.user.toString() // Avoid double notification if post author is mentioned
+        ) {
+          await NotificationService.mention(
+            commenterId.toString(),         // The user who made the comment (mentioner)
+            mentionedUser._id.toString(),  // The user who was mentioned
+            post._id.toString()            // The ID of the post
+          );
+        }
+      }
+    }
+
+    // ==========================================================
+    // NOTIFICATION INTEGRATION END
+    // ==========================================================
 
     return res.status(201).json(populatedComment);
   } catch (error) {
@@ -188,43 +245,69 @@ export const deleteComment = async (req: Request, res: Response) => {
  */
 export const toggleLikeComment = async (req: Request, res: Response) => {
   try {
-    // Use commentId from params (not both id and commentId)
-    const { id } = req.params;
-    const userId = req.user?.id;
-    
-    if (!userId) {
+    const { id: commentId } = req.params; // Destructure and rename to commentId for clarity
+    const likerId = req.user?._id; // <--- Use _id for consistency
+
+    if (!likerId) {
       return res.status(401).json({ message: 'User not authenticated' });
     }
 
     // Get comment with null check
-    const comment = await Comment.findById(id);
+    const comment = await Comment.findById(commentId); // Use commentId
     if (!comment) {
       return res.status(404).json({ message: 'Comment not found' });
     }
+
+    // Determine if the action is a "like" or "unlike" BEFORE toggling
+    const isLiking = !comment.likes.some(like => like.toString() === likerId.toString()); // True if user is about to like (not currently liked)
 
     // Get post AFTER confirming comment exists
     const post = await Post.findById(comment.post);
     if (!post) {
       return res.status(404).json({ message: 'Post not found' });
     }
+    
+    // --- IMPORTANT: Validate access BEFORE toggling and sending notification ---
+    // You might have existing access checks here from other functions
+    // (e.g., checking if user is blocked, post visibility etc.)
+    // If not, consider adding them here to prevent unauthorized liking/unliking
+    // For brevity, I'm assuming such checks are handled by middleware or prior code if needed.
+    // However, if you need to fetch currentUser and postOwner to do visibility/block checks,
+    // you should do it here BEFORE the toggle and notification logic.
+    // Example:
+    /*
+    const postOwner = await User.findById(post.user);
+    const currentUser = await User.findById(likerId);
+    if (!postOwner || !currentUser) { // ... handle errors }
+    // Add your block/visibility checks here if necessary
+    */
 
-    // Toggle the like
-    await comment.toggleLike(userId);
+
+    // Toggle the like (this method should add or remove the like)
+    await comment.toggleLike(likerId); // Use likerId
 
     // Get updated comment data
-    const updatedComment = await Comment.findById(id)
-      .populate('user', 'name profileImage')
+    // IMPORTANT: Ensure you populate 'username', 'profileImage', 'profilePicture' for frontend needs
+    const updatedComment = await Comment.findById(commentId) // Use commentId
+      .populate('user', 'username profileImage profilePicture') // <--- Updated populate fields
       .lean();
     
-    // Send notification if user is liking someone else's comment
-    if (comment.user.toString() !== userId) {
+    // ==========================================================
+    // NOTIFICATION INTEGRATION START
+    // ==========================================================
+    // Send notification ONLY if the action was a LIKE (not an unlike)
+    // and if the liker is not the comment author.
+    if (isLiking && comment.user.toString() !== likerId.toString()) { // Use likerId for comparison
       await NotificationService.commentLike(
-        userId,
-        comment.user.toString(),
-        post._id.toString(),
-        id
+        likerId.toString(),         // The user who liked the comment
+        comment.user.toString(),    // The author of the original comment
+        post._id.toString(),        // The ID of the post the comment belongs to
+        commentId.toString()        // The ID of the comment that was liked
       );
     }
+    // ==========================================================
+    // NOTIFICATION INTEGRATION END
+    // ==========================================================
     
     return res.status(200).json(updatedComment);
   } catch (error) {
@@ -267,8 +350,6 @@ export const addReply = async (req: Request, res: Response) => {
   }
 };
 
-// src/controllers/comment.controller.ts
-// ... (keep all previous code the same, just update the deleteReply function)
 
 /**
  * @desc    Delete a reply
