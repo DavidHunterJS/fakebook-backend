@@ -172,39 +172,35 @@ pipeline {
             }
         }
         
-        stage('Configure Backend Environment') {
-            steps {
-                script {
-                    sh '''
-                        echo "Setting environment variables for ${DEPLOY_ENV} backend..."
-                        
-                        # Set appropriate frontend URL
-                        if [ "${DEPLOY_ENV}" = "production" ]; then
-                            heroku config:set CLIENT_URL=https://trippy.wtf -a ${HEROKU_APP_NAME}
-                            heroku config:set NODE_ENV=production -a ${HEROKU_APP_NAME}
-                        elif [ "${DEPLOY_ENV}" = "staging" ]; then
-                            heroku config:set CLIENT_URL=https://fakebook-frontend-staging.herokuapp.com -a ${HEROKU_APP_NAME}
-                            heroku config:set NODE_ENV=staging -a ${HEROKU_APP_NAME}
-                        else
-                            heroku config:set CLIENT_URL=https://fakebook-frontend-dev-10ffd2412b67.herokuapp.com -a ${HEROKU_APP_NAME}
-                            heroku config:set NODE_ENV=development -a ${HEROKU_APP_NAME}
-                        fi
-                        
-                        # Ensure JWT_SECRET is set (you should set this manually once per app)
-                        heroku config:get JWT_SECRET -a ${HEROKU_APP_NAME} || echo "⚠️  WARNING: JWT_SECRET not set!"
-                        
-                        # Show current config
-                        echo "Current backend config:"
-                        heroku config -a ${HEROKU_APP_NAME}
-                    '''
-                }
-            }
-        }
-        
         stage('Checkout Code') {
             steps {
                 echo "Using code from SCM checkout"
                 echo "Checked out branch: ${params.DEPLOY_BRANCH}"
+            }
+        }
+        
+        stage('Verify Deployment') {
+            steps {
+                script {
+                    sh '''
+                        echo "Waiting for backend to be ready"
+                        sleep 30
+                        
+                        APP_URL=$(heroku info -a ${HEROKU_APP_NAME} --json | grep web_url | cut -d '"' -f 4)
+                        echo "Backend URL: $APP_URL"
+                        
+                        # Test health endpoint
+                        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}health" || echo "000")
+                        
+                        if [ "$HTTP_STATUS" -eq 200 ]; then
+                            echo "✅ Backend is healthy!"
+                        else
+                            echo "⚠️  Backend returned status $HTTP_STATUS"
+                            echo "Check backend logs:"
+                            heroku logs -n 50 -a ${HEROKU_APP_NAME} || echo "Could not fetch logs"
+                        fi
+                    '''
+                }
             }
         }
     }
