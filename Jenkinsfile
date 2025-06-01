@@ -201,28 +201,10 @@ pipeline {
             }
         }
         
-        stage('Verify Deployment') {
+        stage('Checkout Code') {
             steps {
-                script {
-                    sh '''
-                        echo "Waiting for backend to be ready..."
-                        sleep 30
-                        
-                        APP_URL=$(heroku info -a ${HEROKU_APP_NAME} --json | grep web_url | cut -d '"' -f 4)
-                        echo "Backend URL: $APP_URL"
-                        
-                        # Test health endpoint
-                        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}health" || echo "000")
-                        
-                        if [ "$HTTP_STATUS" -eq 200 ]; then
-                            echo "✅ Backend is healthy!"
-                        else
-                            echo "⚠️  Backend returned status $HTTP_STATUS"
-                            echo "Check backend logs:"
-                            heroku logs -n 50 -a ${HEROKU_APP_NAME} || echo "Could not fetch logs"
-                        fi
-                    '''
-                }
+                echo "Using code from SCM checkout"
+                echo "Checked out branch: ${params.DEPLOY_BRANCH}"
             }
         }
     }
