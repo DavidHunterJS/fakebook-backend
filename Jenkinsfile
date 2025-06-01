@@ -1,12 +1,28 @@
 pipeline {
     agent any
     
-    parameters {
-        choice(name: 'ENVIRONMENT', choices: ['dev', 'staging', 'production'], description: 'Deploy to which environment?')
-        string(name: 'DEPLOY_BRANCH', defaultValue: '${env.BRANCH_NAME}', description: 'Branch to deploy (e.g., main, develop, feature/user-auth)')
-        booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip running tests')
-        booleanParam(name: 'FORCE_DEPLOY', defaultValue: false, description: 'Force deployment without approval')
-    }
+parameters {
+    choice(
+        name: 'ENVIRONMENT',
+        choices: ['dev', 'staging', 'production'],
+        description: 'Deploy to which environment?'
+    )
+    choice(
+        name: 'DEPLOY_BRANCH',
+        choices: ['develop', 'main', 'feature/user-auth'],
+        description: 'Branch to deploy (e.g., main, develop, feature/user-auth)'
+    )
+    booleanParam(
+        name: 'SKIP_TESTS',
+        defaultValue: false,
+        description: 'Skip running tests'
+    )
+    booleanParam(
+        name: 'FORCE_DEPLOY',
+        defaultValue: false,
+        description: 'Force deployment without approval'
+    )
+}
     
     environment {
         // Dynamic app name based on environment
