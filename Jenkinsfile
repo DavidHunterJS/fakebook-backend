@@ -61,7 +61,7 @@ pipeline {
         
         stage('Checkout Code') {
             steps {
-                git branch: "${params.DEPLOY_BRANCH}", url: 'https://github.com/DavidHunterJS/facebook-backend.git'
+                git branch: "${params.DEPLOY_BRANCH}", url: 'https://github.com/DavidHunterJS/fakebook-backend.git'
                 echo "Checked out branch: ${params.DEPLOY_BRANCH}"
             }
         }
