@@ -172,12 +172,7 @@ pipeline {
             }
         }
         
-        stage('Checkout Code') {
-            steps {
-                echo "Using code from SCM checkout"
-                echo "Checked out branch: ${params.DEPLOY_BRANCH}"
-            }
-        }
+
         
         stage('Verify Deployment') {
             steps {
