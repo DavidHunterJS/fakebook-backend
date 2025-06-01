@@ -62,7 +62,9 @@ parameters {
 
                     def branch = params.DEPLOY_BRANCH
                     def env = params.ENVIRONMENT
-                    
+
+
+
                     if (env == 'production' && !branch.matches('main|master')) {
                         error("❌ Production can only be deployed from main branch")
                     } else if (env == 'staging' && branch != 'develop') {
