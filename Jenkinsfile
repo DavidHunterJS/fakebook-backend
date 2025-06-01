@@ -59,6 +59,7 @@ parameters {
         stage('Validate GitFlow Rules') {
             steps {
                 script {
+
                     def branch = params.DEPLOY_BRANCH
                     def env = params.ENVIRONMENT
                     
