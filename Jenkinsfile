@@ -67,21 +67,22 @@ pipeline {
         }
         
         stage('Ensure Dev App Exists') {
-            when {
-                expression { params.ENVIRONMENT == 'dev' }
-            }
             steps {
                 script {
-                    sh """
-                        echo "Ensuring dev backend app exists..."
+                    sh '''
+                        echo "Ensuring ${ENVIRONMENT} backend app exists..."
                         
-                        if ! heroku apps:info -a ${HEROKU_APP_NAME} &> /dev/null; then
-                            heroku create ${HEROKU_APP_NAME}
-                            echo "✅ Created dev backend app: ${HEROKU_APP_NAME}"
+                        # Check if app exists
+                        if heroku apps:info -a ${HEROKU_APP_NAME} >/dev/null 2>&1; then
+                            echo "✅ App ${HEROKU_APP_NAME} already exists"
                         else
-                            echo "✅ Dev backend app already exists: ${HEROKU_APP_NAME}"
+                            echo "Creating new Heroku app: ${HEROKU_APP_NAME}"
+                            heroku create ${HEROKU_APP_NAME}
                         fi
-                    """
+                        
+                        # Display app info
+                        heroku apps:info -a ${HEROKU_APP_NAME}
+                    '''
                 }
             }
         }
