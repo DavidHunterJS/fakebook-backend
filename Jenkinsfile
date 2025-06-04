@@ -291,7 +291,7 @@ pipeline {
                             echo "⚠️  Backend on ${HEROKU_APP_NAME} returned status $HTTP_STATUS from $HEALTH_URL"
                             echo "Check backend logs for ${HEROKU_APP_NAME}:"
                             # The --since flag might not be supported by older Heroku CLI versions
-                            heroku logs -n 50 -a ${HEROKU_APP_NAME} --tail || heroku logs -n 50 -a ${HEROKU_APP_NAME} || echo "Could not fetch logs"
+                            heroku logs -n 5 -a ${HEROKU_APP_NAME} || heroku logs -n 50 -a ${HEROKU_APP_NAME} || echo "Could not fetch logs"
                         fi
                     '''
                 }
