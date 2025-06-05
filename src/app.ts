@@ -22,25 +22,18 @@ dotenv.config();
 
 // Initialize express
 const app = express();
-const server = http.createServer(app);
 
 // Support multiple origins
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',') 
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
   : ['http://localhost:3000'];
 
 console.log('Allowed Origins:', allowedOrigins);
 
-const io = new SocketIOServer(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ['GET', 'POST'],
-    credentials: true
-  }
-});
-
-// Connect to Database
-connectDB();
+// Connect to Database (only if not in test environment)
+if (process.env.NODE_ENV !== 'test') {
+  connectDB();
+}
 
 // Init Middleware
 app.use(express.json());
@@ -70,14 +63,11 @@ app.use('/api/friends', friendRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 
-// Socket.io connection
-socketHandler(io);
-
 // Catch-all route handler (must be placed after all other routes)
 app.use('*', (req: Request, res: Response) => {
-  res.status(404).json({ 
-    message: 'Route not found', 
-    path: req.originalUrl 
+  res.status(404).json({
+    message: 'Route not found',
+    path: req.originalUrl
   });
 });
 
@@ -90,15 +80,35 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   res.status(500).send('Server Error');
 });
 
-const PORT = process.env.PORT || 5000;
-
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log('Confirmed static /uploads serving from:', staticUploadsPath);
+// Create server and Socket.IO setup
+const server = http.createServer(app);
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
 });
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err: Error) => {
-  console.log('Unhandled Rejection:', err.message);
-  server.close(() => process.exit(1));
-});
+// Socket.io connection
+socketHandler(io);
+
+// Only start server if this file is run directly (not imported)
+if (require.main === module) {
+  const PORT = process.env.PORT || 5000;
+  
+  server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log('Confirmed static /uploads serving from:', staticUploadsPath);
+  });
+
+  // Handle unhandled promise rejections
+  process.on('unhandledRejection', (err: Error) => {
+    console.log('Unhandled Rejection:', err.message);
+    server.close(() => process.exit(1));
+  });
+}
+
+// Export for testing
+export { app, server, io };
+export default app;
