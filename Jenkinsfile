@@ -35,11 +35,11 @@ pipeline {
         HEROKU_API_KEY = credentials('HEROKU_API_KEY') // Ensure this credential ID is correct in Jenkins
         DEPLOY_ENV = "${params.ENVIRONMENT}"
     }
-    
+
     tools {
         nodejs 'NodeJS_18_on_EC2' // Ensure this Node.js installation is configured in Jenkins Global Tool Configuration
     }
-    
+
     stages {
         stage('Initialize') {
             steps {
@@ -110,7 +110,7 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Validate GitFlow Rules') {
             steps {
                 script {
@@ -133,7 +133,7 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Checkout Code') {
             steps {
                 script {
@@ -173,14 +173,12 @@ pipeline {
                             echo "Creating new Heroku app: ${HEROKU_APP_NAME}"
                             heroku create ${HEROKU_APP_NAME} || echo "App creation may have failed or it already exists (race condition)."
                         fi
-                        
-                        # Display app info
                         heroku apps:info -a ${HEROKU_APP_NAME}
                     '''
                 }
             }
         }
-        
+
         stage('Install Dependencies') {
             steps {
                 sh '''
@@ -212,19 +210,19 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Run Tests') {
             when {
-                expression { params.SKIP_TESTS == false }
+                expression { !params.SKIP_TESTS }
             }
             steps {
                 sh 'npm test || echo "No tests configured or tests failed (non-critical for this example)"'
             }
         }
-        
+
         stage('Deployment Approval') {
             when {
-                expression { params.ENVIRONMENT == 'production' && params.FORCE_DEPLOY == false }
+                expression { env.DEPLOY_ENV == 'production' && !params.FORCE_DEPLOY }
             }
             steps {
                 script {
@@ -241,7 +239,7 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Deploy to Heroku') {
             steps {
                 script {
@@ -291,14 +289,14 @@ pipeline {
                             echo "⚠️  Backend on ${HEROKU_APP_NAME} returned status $HTTP_STATUS from $HEALTH_URL"
                             echo "Check backend logs for ${HEROKU_APP_NAME}:"
                             # The --since flag might not be supported by older Heroku CLI versions
-                            heroku logs -n 50 -a ${HEROKU_APP_NAME} --tail || heroku logs -n 50 -a ${HEROKU_APP_NAME} || echo "Could not fetch logs"
+                            heroku logs -n 5 -a ${HEROKU_APP_NAME} || heroku logs -n 5 -a ${HEROKU_APP_NAME} || echo "Could not fetch logs"
                         fi
                     '''
                 }
             }
         }
     }
-    
+
     post {
         always {
             echo "Pipeline finished for ${DEPLOY_ENV} environment, branch ${env.RESOLVED_BRANCH}."
