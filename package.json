@@ -9,7 +9,7 @@
         "build": "tsc",
         "lint": "eslint src/**/*.ts",
         "lint:fix": "eslint src/**/*.ts --fix",
-        "test": "jest"
+        "test": "jest --runInBand"
     },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.815.0",
