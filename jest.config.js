@@ -3,6 +3,12 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts'],
+  
+  // ** ADDED THIS LINE **
+  // A list of paths to directories that Jest should NOT search for files in.
+  // This prevents the "duplicate manual mock" warning by ignoring the compiled JS output from 'tsc'.
+  modulePathIgnorePatterns: ['<rootDir>/dist/'],
+
   testMatch: [
     '**/__tests__/**/*.test.ts',
     '**/?(*.)+(test).ts'
@@ -45,7 +51,7 @@ module.exports = {
 // Add to package.json (scripts section)
 /*
 "scripts": {
-  "test": "NODE_ENV=test jest",
+  "test": "NODE_ENV=test jest --runInBand",
   "test:watch": "NODE_ENV=test jest --watch",
   "test:coverage": "NODE_ENV=test jest --coverage",
   "test:verbose": "NODE_ENV=test jest --verbose"
