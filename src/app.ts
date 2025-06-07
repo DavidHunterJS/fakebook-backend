@@ -49,6 +49,12 @@ console.log('Express will serve static files for /uploads from absolute path:', 
 app.use('/uploads', express.static(staticUploadsPath));
 // ---------------------------
 
+// --- Add this health check route ---
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).send('OK');
+});
+// ------------------------------------
+
 // Root route handler
 app.get('/', (req: Request, res: Response) => {
   res.json({ message: 'Fakebook API is running' });
