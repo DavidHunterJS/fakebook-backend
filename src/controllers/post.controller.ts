@@ -645,9 +645,11 @@ export const deletePost = async (req: Request, res: Response): Promise<void> => 
   }
 };
 
+// src/controllers/post.controller.ts -> likePost function
+
 /**
  * @route   POST api/posts/:id/like
- * @desc    Like a post
+ * @desc    Like or unlike a post (toggle)
  * @access  Private
  */
 export const likePost = async (
@@ -660,77 +662,57 @@ export const likePost = async (
       return res.status(400).json({ errors: errors.array() });
     }
 
-    if (!req.user || !req.user._id) { // Use _id and ensure req.user exists
+    if (!req.user || !req.user._id) {
       return res.status(401).json({ message: 'Not authorized' });
     }
 
-    // Use req.params.id directly and capture likerId
-    const postId = req.params.id; // Use this instead of destructuring from params again
-    const likerId = req.user._id; // The ID of the user liking the post
+    const postId = req.params.id;
+    const likerId = req.user._id;
 
-    // Find post
-    const post = await Post.findById(postId); // Use postId from params
+    const post = await Post.findById(postId);
     if (!post) {
       return res.status(404).json({ message: 'Post not found' });
     }
 
-    // Check if user can see this post (same visibility rules as viewing)
+    // --- Visibility and permission checks (no changes needed here) ---
     const postOwner = await User.findById(post.user);
-    if (!postOwner) {
-      return res.status(404).json({ message: 'Post owner not found' });
+    if (!postOwner) return res.status(404).json({ message: 'Post owner not found' });
+    const currentUser = await User.findById(likerId);
+    if (!currentUser) return res.status(404).json({ message: 'Current user not found' });
+    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner._id.toString());
+    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === likerId.toString());
+    if (isBlocked || hasBlocked) return res.status(403).json({ message: 'Cannot interact with this post' });
+    const isOwner = post.user.toString() === likerId.toString();
+    const isFriend = currentUser.friends.some(id => id.toString() === postOwner._id.toString());
+    if (!isOwner && post.visibility === 'private') return res.status(403).json({ message: 'This post is private' });
+    if (!isOwner && post.visibility === 'friends' && !isFriend) return res.status(403).json({ message: 'This post is only visible to friends' });
+    // --- End of visibility checks ---
+
+    // ** CORRECTED TOGGLE LOGIC **
+    const likeIndex = post.likes.findIndex(like => like.toString() === likerId.toString());
+
+    if (likeIndex > -1) {
+      // User has already liked the post, so UNLIKE it.
+      post.likes.splice(likeIndex, 1);
+      await post.save();
+      // No notification is sent for an unlike action.
+      return res.json({ message: 'Post unliked', likes: post.likes.length });
+
+    } else {
+      // User has not liked the post, so LIKE it.
+      post.likes.push(likerId);
+      await post.save();
+      
+      // Send notification ONLY when a new like is added
+      if (post.user.toString() !== likerId.toString()) {
+        await NotificationService.postLike(
+          likerId.toString(),
+          post.user.toString(),
+          postId.toString()
+        );
+      }
+      return res.json({ message: 'Post liked', likes: post.likes.length });
     }
-
-    // Get current user
-    const currentUser = await User.findById(likerId); // Use likerId
-    if (!currentUser) {
-      return res.status(404).json({ message: 'Current user not found' });
-    }
-
-    // Check if either user has blocked the other
-    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner._id.toString()); // Use _id for comparison
-    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === likerId.toString()); // Use likerId for comparison
-
-    if (isBlocked || hasBlocked) {
-      return res.status(403).json({ message: 'Cannot interact with this post' });
-    }
-
-    // Check post visibility
-    const isOwner = post.user.toString() === likerId.toString(); // Use likerId for comparison
-    const isFriend = currentUser.friends.some(id => id.toString() === postOwner._id.toString()); // Use _id for comparison
-
-    if (!isOwner && post.visibility === 'private') {
-      return res.status(403).json({ message: 'This post is private' });
-    }
-
-    if (!isOwner && post.visibility === 'friends' && !isFriend) {
-      return res.status(403).json({ message: 'This post is only visible to friends' });
-    }
-
-    // Check if post is already liked
-    if (post.likes.some(like => like.toString() === likerId.toString())) { // Use likerId for comparison
-      return res.status(400).json({ message: 'Post already liked' });
-    }
-
-    // Add like
-    post.likes.push(likerId); // Use likerId
-    await post.save();
-
-    // ==========================================================
-    // NOTIFICATION INTEGRATION START
-    // ==========================================================
-    // Send notification if you're not liking your own post
-    if (post.user.toString() !== likerId.toString()) { // Use likerId for consistency
-      await NotificationService.postLike(
-        likerId.toString(),        // The user who liked the post
-        post.user.toString(),      // The author of the post
-        postId.toString()          // The ID of the post that was liked
-      );
-    }
-    // ==========================================================
-    // NOTIFICATION INTEGRATION END
-    // ==========================================================
-
-    return res.json({ message: 'Post liked', likes: post.likes.length });
   } catch (err) {
     console.error((err as Error).message);
     return res.status(500).send('Server error');
