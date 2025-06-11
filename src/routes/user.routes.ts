@@ -1,35 +1,11 @@
 // src/routes/user.routes.ts
 import express, { Router } from 'express';
 import { body, param, query } from 'express-validator';
-import {
-  searchUsers,
-  getUserById,
-  getUserProfile,
-  updateProfile,
-  uploadProfilePicture, // <---s Import it directly by name
-  uploadCoverPhoto,
-  getFriends,
-  getFriendRequests,
-  getFriendSuggestions,
-  // ... include all other controller functions you use from user.controller.ts
-  sendFriendRequest, // (these might be in friend.controller.ts or user.controller.ts based on your full structure)
-  acceptFriendRequest,
-  rejectFriendRequest,
-  removeFriend,
-  blockUser,
-  unblockUser,
-  getBlockedUsers,
-  getOnlineFriends,
-  updatePrivacySettings,
-  getInactiveUsers,
-  reportUser,
-  getReportedUsers
-  // Add any other functions exported from user.controller.ts that you use in this routes file
-}  from '../controllers/user.controller';
+// ** CORRECTED IMPORT STYLE **
+// Import the entire controller as a single object.
+import * as userController from '../controllers/user.controller';
 import authMiddleware from '../middlewares/auth.middleware';
 import { isAdmin } from '../middlewares/role.middleware';
-import uploadMiddleware from '../middlewares/upload.middleware';
-import auth from '../middlewares/auth.middleware';
 import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
 
 const router: Router = express.Router();
@@ -62,7 +38,7 @@ router.get(
       .isInt({ min: 1, max: 50 })
       .withMessage('Limit must be between 1 and 50')
   ],
-      searchUsers
+  userController.searchUsers
 );
 
 /**
@@ -70,7 +46,7 @@ router.get(
  * @desc    Get friend suggestions
  * @access  Private
  */
-router.get('/suggestions', getFriendSuggestions);
+router.get('/suggestions', userController.getFriendSuggestions);
 
 /**
  * @route   GET api/users/profile/:username
@@ -86,7 +62,7 @@ router.get(
       .notEmpty()
       .withMessage('Username is required')
   ],
-  getUserProfile
+  userController.getUserProfile
 );
 
 
@@ -102,7 +78,7 @@ router.get(
       .isMongoId()
       .withMessage('Invalid user ID')
   ],
-  getUserById
+  userController.getUserById
 );
 
 /**
@@ -146,7 +122,7 @@ router.put(
       .isISO8601()
       .withMessage('Birthday must be a valid date')
   ],
-  updateProfile
+  userController.updateProfile
 );
 
 /**
@@ -156,21 +132,21 @@ router.put(
  */
 router.post(
   '/profile/picture', 
-  auth, 
+  authMiddleware, 
   s3UploadMiddleware.profilePicture, 
-  uploadProfilePicture
+  userController.uploadProfilePicture
 );
 
 /**
- * @route   POST api/users/profile/cover  // Or /api/profile/cover depending on how this router is mounted
+ * @route   POST api/users/profile/cover
  * @desc    Upload cover photo
  * @access  Private
  */
 router.post(
-  '/profile/cover', // Or just '/cover' if this router is mounted at /api/users/profile or /api/profile
-  auth, // Make sure auth middleware runs before upload if not applied globally to router
-  s3UploadMiddleware.coverPhoto, // <--- CORRECTED: Use the specific coverPhoto multer instance
-  uploadCoverPhoto             // Your controller function
+  '/profile/cover',
+  authMiddleware,
+  s3UploadMiddleware.coverPhoto,
+  userController.uploadCoverPhoto
 );
 
 /**
@@ -178,14 +154,14 @@ router.post(
  * @desc    Get user's friends
  * @access  Private
  */
-router.get('/friends', getFriends);
+router.get('/friends', userController.getFriends);
 
 /**
  * @route   GET api/users/friend-requests
  * @desc    Get user's friend requests
  * @access  Private
  */
-router.get('/friend-requests', getFriendRequests);
+router.get('/friend-requests', userController.getFriendRequests);
 
 /**
  * @route   POST api/users/friend-request/:userId
@@ -199,7 +175,7 @@ router.post(
       .isMongoId()
       .withMessage('Invalid user ID')
   ],
-  sendFriendRequest
+  userController.sendFriendRequest
 );
 
 /**
@@ -214,7 +190,7 @@ router.put(
       .isMongoId()
       .withMessage('Invalid user ID')
   ],
-  acceptFriendRequest
+  userController.acceptFriendRequest
 );
 
 /**
@@ -229,7 +205,7 @@ router.put(
       .isMongoId()
       .withMessage('Invalid user ID')
   ],
-  rejectFriendRequest
+  userController.rejectFriendRequest
 );
 
 /**
@@ -244,7 +220,7 @@ router.delete(
       .isMongoId()
       .withMessage('Invalid user ID')
   ],
-  removeFriend
+  userController.removeFriend
 );
 
 /**
@@ -259,7 +235,7 @@ router.post(
       .isMongoId()
       .withMessage('Invalid user ID')
   ],
-  blockUser
+  userController.blockUser
 );
 
 /**
@@ -274,7 +250,7 @@ router.delete(
       .isMongoId()
       .withMessage('Invalid user ID')
   ],
-  unblockUser
+  userController.unblockUser
 );
 
 /**
@@ -282,14 +258,14 @@ router.delete(
  * @desc    Get blocked users
  * @access  Private
  */
-router.get('/blocked', getBlockedUsers);
+router.get('/blocked', userController.getBlockedUsers);
 
 /**
  * @route   GET api/users/online-friends
  * @desc    Get online friends
  * @access  Private
  */
-router.get('/online-friends', getOnlineFriends);
+router.get('/online-friends', userController.getOnlineFriends);
 
 /**
  * @route   PUT api/users/privacy-settings
@@ -314,7 +290,7 @@ router.put(
       .isIn(['public', 'friends', 'private'])
       .withMessage('Posts visibility must be public, friends, or private')
   ],
-  updatePrivacySettings
+  userController.updatePrivacySettings
 );
 
 /**
@@ -341,7 +317,7 @@ router.get(
       .isInt({ min: 1, max: 100 })
       .withMessage('Limit must be between 1 and 100')
   ],
-  getInactiveUsers
+  userController.getInactiveUsers
 );
 
 /**
@@ -364,7 +340,7 @@ router.post(
       .isLength({ max: 1000 })
       .withMessage('Report reason cannot exceed 1000 characters')
   ],
-  reportUser
+  userController.reportUser
 );
 
 /**
@@ -386,7 +362,7 @@ router.get(
       .isInt({ min: 1, max: 100 })
       .withMessage('Limit must be between 1 and 100')
   ],
-  getReportedUsers
+  userController.getReportedUsers
 );
 
 export default router;

@@ -61,114 +61,76 @@ interface PostIdParam {
 }
 
 
-/**
- * Create a new post
- * @route POST /api/posts
- */
+// src/controllers/post.controller.ts -> createPost function
+
 export const createPost = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       res.status(400).json({ errors: errors.array() });
       return;
     }
 
-    // Ensure user is authenticated
-    if (!req.user || !req.user._id) { // Use req.user._id for consistency with Mongoose
+    if (!req.user || !req.user._id) {
       res.status(401).json({ error: 'User not authenticated' });
       return;
     }
 
-    const userId = req.user._id; // Use _id here
-    const { text = '', visibility = PostVisibility.PUBLIC } = req.body;
+    const userId = req.user._id;
+    const { text, visibility = PostVisibility.PUBLIC } = req.body;
 
-    // Check if there's either text or media
-    if ((!text || text.trim() === '') && (!req.files || !Array.isArray(req.files) || req.files.length === 0)) {
-      res.status(400).json({ error: 'Post must contain either text or media' });
-      return;
-    }
-
-    // Process media files from S3 upload
     const files = req.files as Express.Multer.File[] | undefined;
-
-    // Create media objects that match your MediaItem schema
     const mediaItems: MediaItem[] = files ? files.map(file => {
-      // Get file info
       const key = ((file as any).key as string) || `posts/${file.filename}`;
-      const url = ((file as any).location as string) ||
-                 `http://localhost:5000/uploads/${key}`;
-
-      // Determine media type based on mimetype
+      const url = ((file as any).location as string) || `http://localhost:5000/uploads/${key}`;
       let type = 'document';
       if (file.mimetype?.startsWith('image/')) type = 'image';
       else if (file.mimetype?.startsWith('video/')) type = 'video';
       else if (file.mimetype?.startsWith('audio/')) type = 'audio';
-
-      // Create media item object that matches the schema
-      return {
-        url,
-        key,
-        type,
-        originalFilename: file.originalname
-      };
+      return { url, key, type, originalFilename: file.originalname };
     }) : [];
+    
+    // ** FINAL CORRECTED LOGIC **
+    // This logic ensures that if 'text' is provided, it is always used.
+    // A default is only applied if 'text' is missing AND there is media.
+    const postData: {
+        user: any;
+        text: string;
+        media: MediaItem[];
+        visibility: PostVisibility;
+    } = {
+        user: userId,
+        text: text || '', // Default to empty string if text is null/undefined
+        media: mediaItems,
+        visibility
+    };
 
-    console.log('Media items:', JSON.stringify(mediaItems, null, 2));
-
-    // Create a new post with the media items
-    const newPost = new Post({
-      user: userId,
-      text: text || (mediaItems.length > 0 ? "Post with media" : ""), // Ensure text is not empty if only media
-      media: mediaItems,
-      visibility
-    });
-
-    console.log('New post object before save:', {
-      user: newPost.user,
-      text: newPost.text,
-      mediaCount: newPost.media?.length || 0,
-      mediaItems: newPost.media
-    });
-
-    // Save the post
-    const savedPost = await newPost.save();
-
-    // Populate user information for response
-    await savedPost.populate('user', 'username firstName lastName profilePicture');
-
-    // ==========================================================
-    // NOTIFICATION INTEGRATION START
-    // ==========================================================
-
-    // 1. Detect mentions in the post text
-    const mentionedUsernames = text.match(/@(\w+)/g); // Finds all @username patterns
-
-    if (mentionedUsernames && mentionedUsernames.length > 0) {
-      // Extract unique usernames and remove the '@' prefix
-      const uniqueMentionedUsernames = [...new Set(mentionedUsernames.map((m: string) => m.substring(1)))];
-
-      // Find the IDs of the mentioned users
-      const mentionedUsers = await User.find({
-        username: { $in: uniqueMentionedUsernames }
-      }).select('_id');
-
-      // Send a notification for each mentioned user
-      for (const mentionedUser of mentionedUsers) {
-        // Ensure the mentioner is not notifying themselves
-        if (mentionedUser._id.toString() !== userId.toString()) {
-          await NotificationService.mention(
-            userId.toString(), // The user who made the post (mentioner)
-            mentionedUser._id.toString(), // The user who was mentioned
-            savedPost._id.toString() // The ID of the post where the mention occurred
-          );
-        }
-      }
+    // If the text is empty but we have media, set a default message.
+    if (!postData.text && mediaItems.length > 0) {
+        postData.text = "Post with media";
     }
 
-    // ==========================================================
-    // NOTIFICATION INTEGRATION END
-    // ==========================================================
+    // Final validation check for content
+    if (!postData.text.trim() && mediaItems.length === 0) {
+      res.status(400).json({ error: 'Post must contain either text or media' });
+      return;
+    }
+
+    const newPost = new Post(postData);
+    const savedPost = await newPost.save();
+    await savedPost.populate('user', 'username firstName lastName profilePicture');
+
+    // Handle notifications...
+    const mentionedUsernames = (postData.text || '').match(/@(\w+)/g);
+    if (mentionedUsernames && mentionedUsernames.length > 0) {
+        const uniqueMentionedUsernames = [...new Set(mentionedUsernames.map((m: string) => m.substring(1)))];
+        const mentionedUsers = await User.find({ username: { $in: uniqueMentionedUsernames } }).select('_id');
+        for (const mentionedUser of mentionedUsers) {
+            if (mentionedUser._id.toString() !== userId.toString()) {
+                await NotificationService.mention(userId.toString(), mentionedUser._id.toString(), savedPost._id.toString());
+            }
+        }
+    }
 
     res.status(201).json({
       message: 'Post created successfully',
@@ -176,23 +138,11 @@ export const createPost = async (req: Request, res: Response): Promise<void> => 
     });
   } catch (error: unknown) {
     console.error('Error creating post:', error);
-
-    // Add more detailed error logging
-    if (error instanceof Error) {
-      console.error('Error name:', error.name);
-      console.error('Error message:', error.message);
-
-      // Log mongoose validation errors in detail
-      if ((error as any).errors) {
-        Object.keys((error as any).errors).forEach(key => {
-          console.error(`Validation error for field '${key}':`, (error as any).errors[key]);
-        });
-      }
-    }
-
     res.status(500).json({ error: 'Server error' });
   }
 };
+
+
 
 
 /**
