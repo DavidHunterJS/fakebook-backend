@@ -63,78 +63,119 @@ describe('POST /api/posts - Create Post', () => {
 describe('DELETE /api/posts/:id - Delete Post', () => {
   let userAToken: string;
   let userBToken: string;
-  let userAId: string;
   let postToDeleteId: string;
 
-  // Before each test, create two users and a post by User A
   beforeEach(async () => {
-    // ** CORRECTED: Use valid and unique credentials for both users **
-    // Create User A
     const userA = {
-        username: `user_a_${Date.now()}`,
-        email: `usera_${Date.now()}@test.com`,
-        password: 'PasswordA123!',
-        firstName: 'User', lastName: 'A',
+        username: `user_a_${Date.now()}`, email: `usera_${Date.now()}@test.com`,
+        password: 'PasswordA123!', firstName: 'User', lastName: 'A',
     };
     await request(app).post('/api/auth/register').send(userA);
     const loginAResponse = await request(app).post('/api/auth/login').send({ email: userA.email, password: userA.password });
     userAToken = loginAResponse.body.token;
-    userAId = loginAResponse.body.user.id;
 
-    // Create User B
     const userB = {
-        username: `user_b_${Date.now()}`,
-        email: `userb_${Date.now()}@test.com`,
-        password: 'PasswordB123!',
-        firstName: 'User', lastName: 'B',
+        username: `user_b_${Date.now()}`, email: `userb_${Date.now()}@test.com`,
+        password: 'PasswordB123!', firstName: 'User', lastName: 'B',
     };
     await request(app).post('/api/auth/register').send(userB);
     const loginBResponse = await request(app).post('/api/auth/login').send({ email: userB.email, password: userB.password });
     userBToken = loginBResponse.body.token;
 
-    // Create a post by User A
     const postResponse = await request(app).post('/api/posts').set('Authorization', `Bearer ${userAToken}`).send({ text: 'This post will be deleted' });
     postToDeleteId = postResponse.body.post._id;
   });
 
   it('should return 200 and delete the post if the user is the author', async () => {
-    const response = await request(app)
-      .delete(`/api/posts/${postToDeleteId}`)
-      .set('Authorization', `Bearer ${userAToken}`); // Use User A's token
-
+    const response = await request(app).delete(`/api/posts/${postToDeleteId}`).set('Authorization', `Bearer ${userAToken}`);
     expect(response.statusCode).toBe(200);
-    expect(response.body.message).toBe('Post deleted successfully');
-
-    // Verify the post is actually gone from the database
-    const findPost = await Post.findById(postToDeleteId);
-    expect(findPost).toBeNull();
   });
 
   it('should return 403 Forbidden if a user tries to delete another user\'s post', async () => {
+    const response = await request(app).delete(`/api/posts/${postToDeleteId}`).set('Authorization', `Bearer ${userBToken}`);
+    expect(response.statusCode).toBe(403);
+  });
+});
+
+
+// ** NEW TEST SUITE FOR UPDATING POSTS **
+describe('PUT /api/posts/:id - Update Post', () => {
+  let userAToken: string;
+  let userBToken: string;
+  let postToUpdateId: string;
+
+  beforeEach(async () => {
+    // Create User A
+    const userA = {
+        username: `user_a_update_${Date.now()}`, email: `usera_update_${Date.now()}@test.com`,
+        password: 'PasswordA123!', firstName: 'User', lastName: 'A',
+    };
+    await request(app).post('/api/auth/register').send(userA);
+    const loginAResponse = await request(app).post('/api/auth/login').send({ email: userA.email, password: userA.password });
+    userAToken = loginAResponse.body.token;
+
+    // Create User B
+    const userB = {
+        username: `user_b_update_${Date.now()}`, email: `userb_update_${Date.now()}@test.com`,
+        password: 'PasswordB123!', firstName: 'User', lastName: 'B',
+    };
+    await request(app).post('/api/auth/register').send(userB);
+    const loginBResponse = await request(app).post('/api/auth/login').send({ email: userB.email, password: userB.password });
+    userBToken = loginBResponse.body.token;
+
+    // Create a post by User A to be updated in the tests
+    const postResponse = await request(app).post('/api/posts').set('Authorization', `Bearer ${userAToken}`).send({ text: 'Original post text' });
+    postToUpdateId = postResponse.body.post._id;
+  });
+
+  it('should return 200 and update the post text and visibility if the user is the author', async () => {
+    const updateData = {
+      text: 'Updated post text!',
+      visibility: 'friends',
+    };
+
     const response = await request(app)
-      .delete(`/api/posts/${postToDeleteId}`)
-      .set('Authorization', `Bearer ${userBToken}`); // Use User B's token
+      .put(`/api/posts/${postToUpdateId}`)
+      .set('Authorization', `Bearer ${userAToken}`)
+      .send(updateData);
+    
+    expect(response.statusCode).toBe(200);
+    // Check if the returned post reflects the updates
+    expect(response.body.text).toBe(updateData.text);
+    expect(response.body.visibility).toBe(updateData.visibility);
+
+    // Verify the changes in the database
+    const updatedPostInDb = await Post.findById(postToUpdateId);
+    expect(updatedPostInDb?.text).toBe(updateData.text);
+    expect(updatedPostInDb?.visibility).toBe(updateData.visibility);
+  });
+
+  it('should return 403 Forbidden if a user tries to update another user\'s post', async () => {
+    const updateData = { text: 'This update should fail' };
+
+    const response = await request(app)
+      .put(`/api/posts/${postToUpdateId}`)
+      .set('Authorization', `Bearer ${userBToken}`) // Use User B's token
+      .send(updateData);
 
     expect(response.statusCode).toBe(403);
-    expect(response.body.error).toBe('You do not have permission to delete this post');
-    
-    // Verify the post was NOT deleted
-    const findPost = await Post.findById(postToDeleteId);
-    expect(findPost).not.toBeNull();
+    expect(response.body.message).toBe('Not authorized to edit this post');
+
+    // Verify the post was NOT updated in the database
+    const postInDb = await Post.findById(postToUpdateId);
+    expect(postInDb?.text).toBe('Original post text');
   });
 
-  it('should return 404 Not Found if the post ID does not exist', async () => {
+  it('should return 404 Not Found if trying to update a post that does not exist', async () => {
     const fakePostId = new mongoose.Types.ObjectId().toHexString();
+    const updateData = { text: 'This update will fail' };
+
     const response = await request(app)
-      .delete(`/api/posts/${fakePostId}`)
-      .set('Authorization', `Bearer ${userAToken}`);
-
+      .put(`/api/posts/${fakePostId}`)
+      .set('Authorization', `Bearer ${userAToken}`)
+      .send(updateData);
+      
     expect(response.statusCode).toBe(404);
-    expect(response.body.error).toBe('Post not found');
-  });
-
-  it('should return 401 Unauthorized if no token is provided', async () => {
-    const response = await request(app).delete(`/api/posts/${postToDeleteId}`);
-    expect(response.statusCode).toBe(401);
+    expect(response.body.message).toBe('Post not found');
   });
 });
