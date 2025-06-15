@@ -49,8 +49,11 @@ pipeline {
 
         stage('Run Tests') {
             steps {
-                // Use the test script with memory management flags
-                sh 'npm run test:ci || echo "Tests failed but deployment will continue (non-critical)"'
+                // Inject the secret credential as an environment variable
+                withCredentials([string(credentialsId: 'JWT_SECRET_TEST', variable: 'JWT_SECRET')]) {
+                    // The JWT_SECRET variable is now available for the test command
+                    sh 'npm run test:ci || echo "Tests failed but deployment will continue (non-critical)"'
+                }
             }
         }
 
