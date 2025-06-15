@@ -14,22 +14,24 @@ const router: Router = express.Router();
 // Apply auth middleware to all routes
 router.use(authMiddleware);
 
-/**
- * @route   POST api/posts
- * @desc    Create a new post
- * @access  Private
- */
+
 router.post(
   '/',
   [
     hasPermission(Permission.CREATE_POST),
-    s3UploadMiddleware.postMedia,  // Replace uploadMiddleware with S3 middleware
-    body('text')
-      .optional({ nullable: true })
-      .isString()
-      .trim()
-      .isLength({ min: 1, max: 5000 })
-      .withMessage('Post text must be between 1 and 5000 characters'),
+    s3UploadMiddleware.postMedia,
+    // ** CORRECTED VALIDATION LOGIC **
+    // This custom validator ensures a post is not completely empty,
+    // allowing for posts with only text, only media, or both.
+    body().custom((value, { req }) => {
+      const text = req.body.text;
+      const files = req.files as Express.Multer.File[];
+
+      if ((!text || text.trim() === '') && (!files || files.length === 0)) {
+        throw new Error('Post must contain either text or media');
+      }
+      return true; // Validation passed
+    }),
     body('visibility')
       .optional()
       .isIn(['public', 'friends', 'private'])
@@ -37,6 +39,8 @@ router.post(
   ],
   postController.createPost
 );
+
+
 
 /**
  * @route   GET api/posts
