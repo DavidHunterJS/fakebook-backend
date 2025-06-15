@@ -91,7 +91,7 @@ pipeline {
                 
                 script {
                     // IMPORTANT: Replace with your actual production app name
-                    def HEROKU_APP_NAME = "YOUR_PRODUCTION_APP_NAME_HERE" 
+                    def HEROKU_APP_NAME = "fakebook-backend" 
                     echo "🏭 Deploying ${env.BRANCH} to PRODUCTION app: ${HEROKU_APP_NAME}"
                     withCredentials([string(credentialsId: 'HEROKU_API_KEY', variable: 'HEROKU_API_KEY_SECRET')]) {
                         sh """
