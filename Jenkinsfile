@@ -46,13 +46,10 @@ pipeline {
 
         stage('Run Tests') {
             steps {
+                // This 'withCredentials' block securely injects the Jenkins secret
+                // into an environment variable named JWT_SECRET for the commands inside.
                 withCredentials([string(credentialsId: 'JWT_SECRET', variable: 'JWT_SECRET')]) {
-                    // ** ADDED DEBUGGING STEP **
-                    // This will print the value of the JWT_SECRET to the console.
-                    // If it prints 'null' or is empty, the credential ID is wrong in Jenkins.
-                    // If it prints '****', it means the variable is set correctly.
-                    sh 'echo "Verifying JWT_SECRET: \$JWT_SECRET"'
-                    
+                    // This command will now run with process.env.JWT_SECRET set correctly.
                     sh 'npm run test:ci || echo "Tests failed but deployment will continue (non-critical)"'
                 }
             }
