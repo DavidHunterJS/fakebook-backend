@@ -6,45 +6,34 @@ describe('User Profile API', () => {
   let token: string;
   let userId: string;
 
-  // This hook now creates a fresh, valid user before each test.
   beforeEach(async () => {
     const userCredentials = {
-      username: `profile_update_tester_${Date.now()}`,
+      // ** CORRECTED: Shortened username prefix to prevent validation failure **
+      username: `p_update_${Date.now()}`,
       email: `profile_update_${Date.now()}@example.com`,
       password: 'Password123!',
       firstName: 'OriginalFirst',
       lastName: 'OriginalLast',
     };
     
-    // Step 1: Register the user
     const registerResponse = await request(app)
         .post('/api/auth/register')
         .send(userCredentials);
     
-    // Add a check to ensure registration was successful
-    if (registerResponse.statusCode !== 201) {
-        console.error('Failed to register user in beforeEach:', registerResponse.body);
-    }
+    // This assertion helps debug setup issues.
     expect(registerResponse.statusCode).toBe(201);
 
-    // Step 2: Log the user in
     const loginResponse = await request(app).post('/api/auth/login').send({
       email: userCredentials.email,
       password: userCredentials.password,
     });
     
-    // Add a check to ensure login was successful
-    if (loginResponse.statusCode !== 200) {
-        console.error('Failed to log in user in beforeEach:', loginResponse.body);
-    }
     expect(loginResponse.statusCode).toBe(200);
 
-    // Now it is safe to access the response body
     token = loginResponse.body.token;
     userId = loginResponse.body.user.id;
   });
 
-  // --- Test Suite for GET /api/auth/me ---
   describe('GET /api/auth/me', () => {
     it('should return 200 and the current user profile for a valid token', async () => {
       const response = await request(app)
@@ -56,7 +45,6 @@ describe('User Profile API', () => {
     });
   });
 
-  // --- Test Suite for PUT /api/users/profile ---
   describe('PUT /api/users/profile', () => {
     it('should return 200 and update the user profile with valid data', async () => {
       const profileUpdates = {
