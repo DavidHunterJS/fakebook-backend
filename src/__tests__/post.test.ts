@@ -9,15 +9,14 @@ import Post from '../models/Post';
 jest.mock('../services/notification.service');
 jest.mock('../middlewares/s3-upload.middleware', () => {
   const dummyMiddleware = (req: any, res: any, next: () => void) => next();
-  
-  // A Proxy automatically handles any property access on the mock
-  return new Proxy(dummyMiddleware, {
-    get: function(target, prop) {
-      // When any property is accessed (e.g., .profilePicture),
-      // return the same dummy middleware.
-      return dummyMiddleware;
-    }
-  });
+  return {
+    __esModule: true, // This helps with ES module interoperability
+    default: dummyMiddleware,
+    profilePicture: dummyMiddleware,
+    // Add any other named exports from the middleware here if they exist
+    // e.g., coverPhoto: dummyMiddleware,
+    deleteFile: jest.fn(), // Mock deleteFile as a simple function
+  };
 });
 
 describe('Post API Endpoints', () => {
