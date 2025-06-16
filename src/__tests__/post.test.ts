@@ -7,24 +7,18 @@ import Post from '../models/Post';
 
 // --- Mock external services ---
 jest.mock('../services/notification.service');
-jest.mock('../middlewares/s3-upload.middleware', () => ({
-  __esModule: true, // This is important for modules with default exports
-  default: (req: any, res: any, next: () => void) => {
-    // You can add logic here to simulate file uploads if needed for specific tests,
-    // for example, by attaching a mock `files` array to the `req` object.
-    // For now, just calling next() will fix the timeout.
-    return next();
-  },
-}));
-
-// ** NEW MOCK for hasPermission middleware **
-// This replaces the real permission check with a dummy function that
-// immediately allows the request to proceed to the controller.
-jest.mock('../middlewares/role.middleware', () => ({
-  hasPermission: () => (req: any, res: any, next: () => void) => next(),
-  isAdmin: (req: any, res: any, next: () => void) => next(),
-  isModerator: (req: any, res: any, next: () => void) => next(),
-}));
+jest.mock('../middlewares/s3-upload.middleware', () => {
+  const dummyMiddleware = (req: any, res: any, next: () => void) => next();
+  
+  // A Proxy automatically handles any property access on the mock
+  return new Proxy(dummyMiddleware, {
+    get: function(target, prop) {
+      // When any property is accessed (e.g., .profilePicture),
+      // return the same dummy middleware.
+      return dummyMiddleware;
+    }
+  });
+});
 
 describe('Post API Endpoints', () => {
 
