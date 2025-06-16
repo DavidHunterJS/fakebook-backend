@@ -2,21 +2,6 @@
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
 
-jest.mock('../middlewares/s3-upload.middleware', () => {
-  // This is a dummy middleware function that just calls next()
-  const dummyMiddleware = (req: any, res: any, next: () => void) => next();
-
-  // We return an object that matches the structure of the real middleware module
-  return {
-    __esModule: true,
-    default: dummyMiddleware,
-    profilePicture: dummyMiddleware, // Handles the uploader for profile pictures
-    // Add any other named exports from your middleware here if needed
-    // e.g., coverPhoto: dummyMiddleware, 
-    deleteFile: jest.fn().mockResolvedValue(undefined), // Mock the deleteFile function
-  };
-});
-
 let mongod: MongoMemoryServer;
 
 beforeAll(async () => {
