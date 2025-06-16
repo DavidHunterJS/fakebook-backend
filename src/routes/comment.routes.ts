@@ -3,41 +3,32 @@ import express from 'express';
 import auth from '../middlewares/auth.middleware';
 import { isAdmin, isModerator, hasPermission } from '../middlewares/role.middleware';
 import { Permission } from '../config/roles';
-import {
-  createComment,
-  getPostComments,
-  getCommentById,
-  updateComment,
-  deleteComment,
-  toggleLikeComment,
-  addReply,
-  deleteReply,
-  toggleLikeReply,
-  reportComment,
-  getReportedComments
-} from '../controllers/comment.controller';
+// ** CORRECTED IMPORT STYLE **
+// Import the entire controller as a single object to prevent loading errors.
+import * as commentController from '../controllers/comment.controller';
 
 const router = express.Router();
 
 // Base comment routes
-router.post('/', auth, createComment);
-router.get('/post/:postId', getPostComments);
-router.get('/:id', getCommentById);
-router.put('/:id', auth, updateComment);
-router.delete('/:id', auth, deleteComment);
+router.post('/', auth, commentController.createComment);
+router.get('/post/:postId', commentController.getPostComments);
+router.get('/:id', commentController.getCommentById);
+router.put('/:id', auth, commentController.updateComment);
+router.delete('/:id', auth, commentController.deleteComment);
 
 // Like/unlike comment
-router.put('/:id/like', auth, toggleLikeComment);
+router.put('/:id/like', auth, commentController.toggleLikeComment);
 
 // Report comment
-router.post('/:id/report', auth, reportComment);
+router.post('/:id/report', auth, commentController.reportComment);
 
 // Admin/Moderator routes - Updated path to match controller comment
-router.get('/reported', auth, isModerator, getReportedComments);
+// ** CORRECTED to use the commentController object **
+router.get('/reported', auth, isModerator, commentController.getReportedComments);
 
 // Reply routes
-router.post('/:id/replies', auth, addReply);
-router.delete('/:id/replies/:replyId', auth, deleteReply);
-router.put('/:id/replies/:replyId/like', auth, toggleLikeReply);
+router.post('/:id/replies', auth, commentController.addReply);
+router.delete('/:id/replies/:replyId', auth, commentController.deleteReply);
+router.put('/:id/replies/:replyId/like', auth, commentController.toggleLikeReply);
 
 export default router;
