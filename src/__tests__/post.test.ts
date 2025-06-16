@@ -7,7 +7,15 @@ import Post from '../models/Post';
 
 // --- Mock external services ---
 jest.mock('../services/notification.service');
-jest.mock('../middlewares/s3-upload.middleware');
+jest.mock('../middlewares/s3-upload.middleware', () => ({
+  __esModule: true, // This is important for modules with default exports
+  default: (req: any, res: any, next: () => void) => {
+    // You can add logic here to simulate file uploads if needed for specific tests,
+    // for example, by attaching a mock `files` array to the `req` object.
+    // For now, just calling next() will fix the timeout.
+    return next();
+  },
+}));
 
 // ** NEW MOCK for hasPermission middleware **
 // This replaces the real permission check with a dummy function that
