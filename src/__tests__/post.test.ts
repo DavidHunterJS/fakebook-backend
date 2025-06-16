@@ -23,7 +23,7 @@ jest.mock('../middlewares/s3-upload.middleware', () => ({
 jest.mock('../middlewares/role.middleware', () => ({
   hasPermission: () => (req: any, res: any, next: () => void) => next(),
   isAdmin: (req: any, res: any, next: () => void) => next(),
-  // isModerator: (req: any, res: any, next: () => void) => next(),
+  isModerator: (req: any, res: any, next: () => void) => next(),
 }));
 
 describe('Post API Endpoints', () => {
