@@ -501,8 +501,8 @@ export const getReportedComments = async (req: Request, res: Response) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate('user', 'name profileImage')
-      .populate('reportReasons.user', 'name')
+      .populate('user', 'username profileImage')
+      .populate('reportReasons.user', 'username')
       .lean();
 
     const total = await Comment.countDocuments({ reported: true });

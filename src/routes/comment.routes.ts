@@ -12,6 +12,11 @@ const router = express.Router();
 // Base comment routes
 router.post('/', auth, commentController.createComment);
 router.get('/post/:postId', commentController.getPostComments);
+
+// Admin/Moderator routes - MUST come before /:id route to avoid parameter conflicts
+router.get('/reported', auth, isModerator, commentController.getReportedComments);
+
+// Routes with :id parameter (must come after specific routes like /reported)
 router.get('/:id', commentController.getCommentById);
 router.put('/:id', auth, commentController.updateComment);
 router.delete('/:id', auth, commentController.deleteComment);
@@ -21,10 +26,6 @@ router.put('/:id/like', auth, commentController.toggleLikeComment);
 
 // Report comment
 router.post('/:id/report', auth, commentController.reportComment);
-
-// Admin/Moderator routes - Updated path to match controller comment
-// ** CORRECTED to use the commentController object **
-router.get('/reported', auth, isModerator, commentController.getReportedComments);
 
 // Reply routes
 router.post('/:id/replies', auth, commentController.addReply);
