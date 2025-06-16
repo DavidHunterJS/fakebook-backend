@@ -1,6 +1,6 @@
 // src/routes/comment.routes.ts
 import express from 'express';
-import  auth  from '../middlewares/auth.middleware';
+import auth from '../middlewares/auth.middleware';
 import { isAdmin, isModerator, hasPermission } from '../middlewares/role.middleware';
 import { Permission } from '../config/roles';
 import {
@@ -32,8 +32,8 @@ router.put('/:id/like', auth, toggleLikeComment);
 // Report comment
 router.post('/:id/report', auth, reportComment);
 
-// Admin/Moderator routes
-router.get('/admin/reported', auth, isModerator, getReportedComments);
+// Admin/Moderator routes - Updated path to match controller comment
+router.get('/reported', auth, isModerator, getReportedComments);
 
 // Reply routes
 router.post('/:id/replies', auth, addReply);
