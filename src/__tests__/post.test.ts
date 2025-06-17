@@ -7,17 +7,7 @@ import Post from '../models/Post';
 
 // --- Mock external services ---
 jest.mock('../services/notification.service');
-// jest.mock('../middlewares/s3-upload.middleware', () => {
-//   const dummyMiddleware = (req: any, res: any, next: () => void) => next();
-//   return {
-//     __esModule: true, // This helps with ES module interoperability
-//     default: dummyMiddleware,
-//     profilePicture: dummyMiddleware,
-//     // Add any other named exports from the middleware here if they exist
-//     // e.g., coverPhoto: dummyMiddleware,
-//     deleteFile: jest.fn(), // Mock deleteFile as a simple function
-//   };
-// });
+
 
 describe('Post API Endpoints', () => {
 
