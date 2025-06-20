@@ -44,19 +44,7 @@ afterAll(async () => {
   }
 }, 30000);
 
-// Clean up data between tests (optional - keeps tests isolated)
-afterEach(async () => {
-  try {
-    const collections = mongoose.connection.collections;
-    
-    for (const key in collections) {
-      const collection = collections[key];
-      await collection.deleteMany({});
-    }
-  } catch (error) {
-    console.error('Error cleaning up test data:', error);
-  }
-});
+
 
 // Handle any unhandled promise rejections in tests
 process.on('unhandledRejection', (reason, promise) => {

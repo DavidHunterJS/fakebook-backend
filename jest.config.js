@@ -1,3 +1,5 @@
+process.env.JWT_SECRET='12e7b872b07f96f6c3b3e02903767bfcf2fe699b8ce05d72e4663f6c5750a5ac'
+process.env.NODE_ENV = 'test';
 // jest.config.js
 module.exports = {
   setupFiles: ['dotenv/config'],
@@ -36,6 +38,7 @@ module.exports = {
     'node_modules/(?!(mongodb-memory-server)/)'
   ]
 };
+
 
 // Add to package.json (devDependencies section)
 /*
