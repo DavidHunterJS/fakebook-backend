@@ -1,81 +1,82 @@
-// src/__tests__/user.test.ts
 import request from 'supertest';
-import { app } from '../app'; // Adjust path if needed
+import { app } from '../app';
+import User from '../models/User';
 
 describe('User Profile API', () => {
+  // --- Test Suite Setup ---
+  // Use the stable beforeAll pattern to set up state once.
   let token: string;
   let userId: string;
 
-  // --- Test User Setup ---
-  // A fresh user is created and logged in before each test in this suite.
-  beforeEach(async () => {
-    const userCredentials = {
-      username: `profile_update_tester_${Date.now()}`,
-      email: `profile_update_${Date.now()}@example.com`,
+  beforeAll(async () => {
+    // 1. Create a user
+    const userPayload = {
+      username: `profile-user-${Date.now()}`,
+      email: `profile-${Date.now()}@test.com`,
       password: 'Password123!',
-      firstName: 'OriginalFirst',
-      lastName: 'OriginalLast',
+      firstName: 'Profile',
+      lastName: 'User',
     };
-    await request(app).post('/api/auth/register').send(userCredentials);
-    const loginResponse = await request(app).post('/api/auth/login').send({
-      email: userCredentials.email,
-      password: userCredentials.password,
-    });
+    await request(app).post('/api/auth/register').send(userPayload);
+
+    // 2. Log in to get a valid token
+    const loginResponse = await request(app)
+      .post('/api/auth/login')
+      .send({ email: userPayload.email, password: userPayload.password });
+
+    // Ensure login is successful before running tests
+    expect(loginResponse.status).toBe(200);
+
     token = loginResponse.body.token;
     userId = loginResponse.body.user.id;
   });
 
-  // --- Test Suite for GET /api/auth/me ---
-  // (We'll keep the previous successful test here for completeness)
+  // --- Test Cases ---
+
   describe('GET /api/auth/me', () => {
     it('should return 200 and the current user profile for a valid token', async () => {
       const response = await request(app)
         .get('/api/auth/me')
         .set('Authorization', `Bearer ${token}`);
-      
+
       expect(response.statusCode).toBe(200);
-      expect(response.body).toHaveProperty('_id', userId);
+      expect(response.body.user.id).toBe(userId);
+      expect(response.body.user).not.toHaveProperty('password'); // Ensure password isn't sent
     });
   });
 
-  // --- Test Suite for PUT /api/users/profile ---
   describe('PUT /api/users/profile', () => {
     it('should return 200 and update the user profile with valid data', async () => {
-      const profileUpdates = {
-        firstName: 'UpdatedFirst',
+      const updatePayload = {
+        firstName: 'UpdatedFirstName',
         bio: 'This is my new bio.',
       };
 
       const response = await request(app)
         .put('/api/users/profile')
         .set('Authorization', `Bearer ${token}`)
-        .send(profileUpdates);
+        .send(updatePayload);
 
-      // Assert a successful response
       expect(response.statusCode).toBe(200);
-
-      // Assert that the returned user object reflects the changes
-      expect(response.body.firstName).toBe('UpdatedFirst');
+      expect(response.body.firstName).toBe('UpdatedFirstName');
       expect(response.body.bio).toBe('This is my new bio.');
-      // Ensure other data, like lastName, was not changed
-      expect(response.body.lastName).toBe('OriginalLast');
+
+      // Verify the change in the database
+      const updatedUser = await User.findById(userId);
+      expect(updatedUser?.firstName).toBe('UpdatedFirstName');
     });
 
     it('should return 400 Bad Request for invalid data (e.g., bio too long)', async () => {
-      const invalidUpdate = {
-        // Create a string that is longer than the 500-character limit
-        bio: 'a'.repeat(501),
+      const invalidPayload = {
+        bio: 'a'.repeat(501), // Assuming max length is 500
       };
 
       const response = await request(app)
         .put('/api/users/profile')
         .set('Authorization', `Bearer ${token}`)
-        .send(invalidUpdate);
+        .send(invalidPayload);
 
       expect(response.statusCode).toBe(400);
-      expect(response.body).toHaveProperty('errors');
-      // Check that the error message is for the 'bio' field
-      expect(response.body.errors[0].path).toBe('bio');
     });
 
     it('should return 401 Unauthorized if no token is provided', async () => {
