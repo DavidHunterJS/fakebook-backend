@@ -19,7 +19,10 @@ describe('User Profile API', () => {
     };
     await request(app).post('/api/auth/register').send(userPayload);
 
-    // 2. Log in to get a valid token
+    // 2. Manually verify the user to ensure login is not blocked
+    await User.updateOne({ email: userPayload.email }, { $set: { isVerified: true } });
+
+    // 3. Log in to get a valid token
     const loginResponse = await request(app)
       .post('/api/auth/login')
       .send({ email: userPayload.email, password: userPayload.password });
@@ -41,7 +44,7 @@ describe('User Profile API', () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.body.user.id).toBe(userId);
-      expect(response.body.user).not.toHaveProperty('password'); // Ensure password isn't sent
+      expect(response.body.user).not.toHaveProperty('password');
     });
   });
 
@@ -61,7 +64,6 @@ describe('User Profile API', () => {
       expect(response.body.firstName).toBe('UpdatedFirstName');
       expect(response.body.bio).toBe('This is my new bio.');
 
-      // Verify the change in the database
       const updatedUser = await User.findById(userId);
       expect(updatedUser?.firstName).toBe('UpdatedFirstName');
     });
