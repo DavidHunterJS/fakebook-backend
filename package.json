@@ -9,8 +9,8 @@
         "build": "tsc",
         "lint": "eslint src/**/*.ts",
         "lint:fix": "eslint src/**/*.ts --fix",
-        "test": "NODE_ENV=test node --expose-gc --max-old-space-size=4096 ./node_modules/.bin/jest --runInBand",
-        "test:ci": "NODE_ENV=test node --expose-gc --max-old-space-size=4096 ./node_modules/.bin/jest --runInBand"
+        "test": "NODE_ENV=test JWT_SECRET=12e7b872b07f96f6c3b3e02903767bfcf2fe699b8ce05d72e4663f6c5750a5ac node --expose-gc --max-old-space-size=4096 ./node_modules/.bin/jest --runInBand",
+        "test:ci": "NODE_ENV=test JWT_SECRET=12e7b872b07f96f6c3b3e02903767bfcf2fe699b8ce05d72e4663f6c5750a5ac node --expose-gc --max-old-space-size=4096 ./node_modules/.bin/jest --runInBand"
     },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.815.0",
