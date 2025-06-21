@@ -75,7 +75,7 @@ describe('User Profile API', () => {
         console.log('user.test.ts: GET /api/auth/me response body:', response.body);
 
       expect(response.statusCode).toBe(200);
-      expect(response.body.user.id).toBe(userId);
+      expect(response.body._id).toBe(userId);
       expect(response.body.user).not.toHaveProperty('password');
     });
   });
