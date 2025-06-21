@@ -8,7 +8,7 @@ pipeline {
     }
 
     tools {
-        nodejs 'NodeJS_18_on_EC2' // Ensure this matches your Jenkins Global Tool Configuration
+        nodejs 'NodeJS_22_on_EC2' // Ensure this matches your Jenkins Global Tool Configuration
     }
 
     stages {
