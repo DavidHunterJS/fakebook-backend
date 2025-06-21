@@ -7,9 +7,9 @@ pipeline {
         string(name: 'MANUAL_BRANCH', defaultValue: 'develop', description: 'Manual Deploy: Choose branch')
     }
 
-    tools {
-        nodejs 'NodeJS_22_on_EC2' // Ensure this matches your Jenkins Global Tool Configuration
-    }
+    // tools {
+    //     nodejs 'NodeJS_22_on_EC2' // Ensure this matches your Jenkins Global Tool Configuration
+    // }
 
     stages {
         stage('Initialize') {
@@ -37,7 +37,18 @@ pipeline {
                 echo "Checked out branch: ${env.BRANCH}"
             }
         }
-
+        
+        stage('Verify Node.js Version in Build') {
+            steps {
+                echo "Checking Node.js and npm versions being used for the build..."
+                sh 'which node'
+                sh 'node -v'
+                sh 'which npm'
+                sh 'npm -v'
+                sh 'echo $PATH'
+            }
+        }
+        
         stage('Install Dependencies') {
             steps {
                 sh 'npm ci'

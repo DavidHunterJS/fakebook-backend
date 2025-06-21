@@ -17,21 +17,51 @@ describe('User Profile API', () => {
       firstName: 'Profile',
       lastName: 'User',
     };
-    await request(app).post('/api/auth/register').send(userPayload);
+
+    // --- Suggested Debugging Logs and Assertions for Registration ---
+    console.log('user.test.ts: Attempting to register user:', userPayload.email);
+    const registerResponse = await request(app).post('/api/auth/register').send(userPayload);
+    console.log('user.test.ts: Register response status:', registerResponse.status);
+    console.log('user.test.ts: Register response body:', registerResponse.body);
+    // Crucial: Assert registration status immediately
+    expect(registerResponse.status).toBe(201); // Assuming 201 Created on successful registration
+    // --- End Debugging Logs for Registration ---
+
 
     // 2. Manually verify the user to ensure login is not blocked
-    await User.updateOne({ email: userPayload.email }, { $set: { isVerified: true } });
+    // --- Suggested Debugging Logs and Assertions for Verification ---
+    console.log('user.test.ts: Attempting to manually verify user:', userPayload.email);
+    const updateResult = await User.updateOne({ email: userPayload.email }, { $set: { isVerified: true } });
+    console.log('user.test.ts: User verification update result (modifiedCount):', updateResult.modifiedCount);
+    // Crucial: Assert that the user was actually found and modified
+    expect(updateResult.modifiedCount).toBe(1);
+
+    // Fetch the user directly to confirm verification status right before login
+    const verifiedUser = await User.findOne({ email: userPayload.email });
+    console.log('user.test.ts: Fetched user after verification (isVerified):', verifiedUser ? verifiedUser.isEmailVerified : 'User not found for verification check');
+    expect(verifiedUser).not.toBeNull();
+    expect(verifiedUser?.isEmailVerified).toBe(true);
+    // --- End Debugging Logs for Verification ---
+
 
     // 3. Log in to get a valid token
+    // --- Suggested Debugging Logs for Login ---
+    console.log('user.test.ts: Attempting to log in user:', userPayload.email);
     const loginResponse = await request(app)
       .post('/api/auth/login')
       .send({ email: userPayload.email, password: userPayload.password });
+
+    console.log('user.test.ts: Login response status:', loginResponse.status);
+    console.log('user.test.ts: Login response body:', loginResponse.body);
+    // --- End Debugging Logs for Login ---
+
 
     // Ensure login is successful before running tests
     expect(loginResponse.status).toBe(200);
 
     token = loginResponse.body.token;
     userId = loginResponse.body.user.id;
+    console.log('user.test.ts: Login successful. Token exists:', !!token, 'UserId:', userId);
   });
 
   // --- Test Cases ---
