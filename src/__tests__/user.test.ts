@@ -31,7 +31,7 @@ describe('User Profile API', () => {
     // 2. Manually verify the user to ensure login is not blocked
     // --- Suggested Debugging Logs and Assertions for Verification ---
     console.log('user.test.ts: Attempting to manually verify user:', userPayload.email);
-    const updateResult = await User.updateOne({ email: userPayload.email }, { $set: { isVerified: true } });
+    const updateResult = await User.updateOne({ email: userPayload.email }, { $set: { isEmailVerified: true } });
     console.log('user.test.ts: User verification update result (modifiedCount):', updateResult.modifiedCount);
     // Crucial: Assert that the user was actually found and modified
     expect(updateResult.modifiedCount).toBe(1);
