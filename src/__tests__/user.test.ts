@@ -71,6 +71,8 @@ describe('User Profile API', () => {
       const response = await request(app)
         .get('/api/auth/me')
         .set('Authorization', `Bearer ${token}`);
+        console.log('user.test.ts: GET /api/auth/me response status:', response.statusCode);
+        console.log('user.test.ts: GET /api/auth/me response body:', response.body);
 
       expect(response.statusCode).toBe(200);
       expect(response.body.user.id).toBe(userId);
