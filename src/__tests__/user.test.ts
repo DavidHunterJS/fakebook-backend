@@ -76,7 +76,7 @@ describe('User Profile API', () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.body._id).toBe(userId);
-      expect(response.body.user).not.toHaveProperty('password');
+      expect(response.body).not.toHaveProperty('password');
     });
   });
 
