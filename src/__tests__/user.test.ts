@@ -11,8 +11,8 @@ describe('User Profile API', () => {
   beforeAll(async () => {
     // 1. Create a user
     const userPayload = {
-      username: `profile-user-${Date.now()}`,
-      email: `profile-${Date.now()}@test.com`,
+      username: `profile_user_${Date.now()}`,
+      email: `profile_${Date.now()}@test.com`,
       password: 'Password123!',
       firstName: 'Profile',
       lastName: 'User',
