@@ -37,7 +37,7 @@ pipeline {
     }
 
     tools {
-        nodejs 'NodeJS_22_on_EC2' // Ensure this Node.js installation is configured in Jenkins Global Tool Configuration
+        nodejs 'NodeJS_18_on_EC2' // Ensure this Node.js installation is configured in Jenkins Global Tool Configuration
     }
 
     stages {
