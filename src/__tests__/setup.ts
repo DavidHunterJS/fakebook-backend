@@ -1,3 +1,6 @@
+process.env.JWT_SECRET='12e7b872b07f96f6c3b3e02903767bfcf2fe699b8ce05d72e4663f6c5750a5ac'
+process.env.NODE_ENV = 'test';
+
 // src/__tests__/setup.ts
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
@@ -6,7 +9,7 @@ let mongod: MongoMemoryServer;
 
 beforeAll(async () => {
   // Set NODE_ENV to test to prevent real DB connection in your server.ts
-  process.env.NODE_ENV = 'test';
+  
   
   try {
     // Create in-memory MongoDB instance

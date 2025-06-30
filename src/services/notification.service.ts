@@ -56,6 +56,31 @@ export class NotificationService {
   }
 
   /**
+   * Send friend decline notification
+   */
+  static async friendDecline(declinerId: string, requesterId: string): Promise<INotification | null> {
+    try {
+      const decliner = await User.findById(declinerId).select('firstName lastName').lean();
+      if (!decliner) return null;
+
+      const declinerName = this.getFullName(decliner);
+
+      // IMPORTANT: You will likely need to add `FRIEND_DECLINE` to your `NotificationType` enum
+      // in the `src/models/Notification.ts` file for this to work without type errors.
+      return this.create(
+        requesterId, // The recipient of the notification is the original requester
+        NotificationType.FRIEND_DECLINE, // Assumes this type exists in your enum
+        `${declinerName} declined your friend request`,
+        `/profile/${declinerId}`, // Link to the decliner's profile
+        declinerId
+      );
+    } catch (error) {
+      console.error('Error sending friend decline notification:', error);
+      return null;
+    }
+  }
+
+  /**
    * Send friend request notification
    */
   static async friendRequest(requesterId: string, recipientId: string): Promise<INotification | null> {

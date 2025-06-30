@@ -13,7 +13,8 @@ export enum NotificationType {
   COMMENT_LIKE = 'comment_like',
   COMMENT_REPLY = 'comment_reply',
   MENTION = 'mention',
-  SYSTEM = 'system'
+  SYSTEM = 'system',
+  FRIEND_DECLINE = 'friend_decline'
 }
 
 /**
