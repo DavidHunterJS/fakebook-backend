@@ -6,10 +6,17 @@ pipeline {
         choice(name: 'MANUAL_ENV', choices: ['dev', 'production'], description: 'Manual Deploy: Choose environment')
         string(name: 'MANUAL_BRANCH', defaultValue: 'develop', description: 'Manual Deploy: Choose branch')
     }
+    
+    environment {
+        // Dynamic app name based on environment and potentially branch type
+        // HEROKU_APP_NAME will be refined in the Initialize or Create Feature Environment stage
+        HEROKU_API_KEY = credentials('HEROKU_API_KEY') // Ensure this credential ID is correct in Jenkins
+        DEPLOY_ENV = "${params.ENVIRONMENT}"
+    }
 
-    // tools {
-    //     nodejs 'NodeJS_22_on_EC2' // Ensure this matches your Jenkins Global Tool Configuration
-    // }
+    tools {
+        nodejs 'NodeJS_22_on_EC2' // Ensure this Node.js installation is configured in Jenkins Global Tool Configuration
+    }
 
     stages {
         stage('Initialize') {
