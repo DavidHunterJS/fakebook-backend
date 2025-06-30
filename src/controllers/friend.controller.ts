@@ -156,6 +156,9 @@ export const declineFriendRequest = async (req: Request, res: Response) => {
     friendship.status = FriendshipStatus.DECLINED;
     await friendship.save();
 
+     
+    await NotificationService.friendDecline(recipientId, requesterId);
+
     return res.status(200).json({
       message: 'Friend request declined',
       friendship
