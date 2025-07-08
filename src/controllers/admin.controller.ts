@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import User from '../models/User';
 import Post from '../models/Post';
 import Comment from '../models/Comment';
+import Friend, { FriendshipStatus } from '../models/Friend'; 
 import { Role } from '../config/roles';
 
 interface PaginationQuery {
@@ -63,27 +64,49 @@ export const getAllUsers = async (req: Request<{}, {}, {}, PaginationQuery>, res
 /**
  * Get user by ID
  */
-export const getUserById = async (req: Request<{id: string}>, res: Response): Promise<Response> => {
+export const getUserById = async (req: Request, res: Response) => {
   try {
-    const user = await User.findById(req.params.id)
-      .select('-password')
-      .populate('friends', 'firstName lastName username profilePicture')
-      .populate('friendRequests', 'firstName lastName username profilePicture')
-      .populate('sentRequests', 'firstName lastName username profilePicture');
-    
+    const { id } = req.params;
+
+    // 1. Find the primary user
+    const user = await User.findById(id).select('-password').lean(); // Use lean for performance
+
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
-    return res.json(user);
+
+    // 2. ✅ Find all accepted friendships for this user
+    const friendships = await Friend.find({
+      $or: [
+        { requester: id, status: FriendshipStatus.ACCEPTED },
+        { recipient: id, status: FriendshipStatus.ACCEPTED }
+      ]
+    });
+
+    // 3. ✅ Extract the IDs of all their friends
+    const friendIds = friendships.map(friendship => {
+      return friendship.requester.toString() === id
+        ? friendship.recipient
+        : friendship.requester;
+    });
+
+    // 4. ✅ Find the friend user documents
+    const friends = await User.find({ _id: { $in: friendIds } })
+      .select('firstName lastName username profilePicture');
+
+    // 5. ✅ Attach the populated friends list to the user object before sending
+    const userWithFriends = {
+      ...user,
+      friends: friends
+    };
+
+    return res.json(userWithFriends);
+
   } catch (err) {
     console.error((err as Error).message);
-    
-    // Check if ID is valid MongoDB ObjectId
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: 'Invalid user ID' });
     }
-    
     return res.status(500).send('Server error');
   }
 };
