@@ -103,14 +103,16 @@ export const sendFriendRequest = async (req: Request, res: Response) => {
  */
 export const acceptFriendRequest = async (req: Request, res: Response) => {
   try {
-    const recipientId = req.user?.id;
-    const requesterId = req.params.userId;
-    const { userId } = req.params;
-    const accepterId = req.user!.id;
+    // Clarified variable names:
+    // The person accepting the request (current user)
+    const accepterId = req.user!.id; 
+    // The person who sent the request (from URL params)
+    const requesterId = req.params.userId; 
 
+    // Find the pending friend request
     const friendship = await Friend.findOne({
       requester: requesterId,
-      recipient: recipientId,
+      recipient: accepterId, // The current user is the recipient
       status: FriendshipStatus.PENDING
     });
 
@@ -118,13 +120,29 @@ export const acceptFriendRequest = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Friend request not found' });
     }
 
+    // Update the friendship status
     friendship.status = FriendshipStatus.ACCEPTED;
     await friendship.save();
 
-    //   Add notification after friend request is successfully accepted
-    await NotificationService.friendAccept(accepterId, userId);
+    // ✅ START: Add friends to each other's User document
+    // This is the critical step that synchronizes the data for your feed
+    
+    // Add the requester to the accepter's friends list
+    await User.findByIdAndUpdate(accepterId, {
+      $addToSet: { friends: requesterId }
+    });
+
+    // Add the accepter to the requester's friends list
+    await User.findByIdAndUpdate(requesterId, {
+      $addToSet: { friends: accepterId }
+    });
+    // ✅ END: Synchronization logic
+
+    // Add notification after friend request is successfully accepted
+    await NotificationService.friendAccept(accepterId, requesterId);
+    
     return res.status(200).json({
-      message: 'Friend request accepted',
+      message: 'Friend request accepted and users are now friends.',
       friendship
     });
   } catch (error) {
@@ -207,13 +225,14 @@ export const cancelFriendRequest = async (req: Request, res: Response) => {
  */
 export const unfriendUser = async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
-    const friendId = req.params.userId;
+    const currentUserId = req.user!.id;
+    const friendIdToRemove = req.params.userId;
 
+    // Find the existing friendship document
     const friendship = await Friend.findOne({
       $or: [
-        { requester: userId, recipient: friendId, status: FriendshipStatus.ACCEPTED },
-        { requester: friendId, recipient: userId, status: FriendshipStatus.ACCEPTED }
+        { requester: currentUserId, recipient: friendIdToRemove, status: FriendshipStatus.ACCEPTED },
+        { requester: friendIdToRemove, recipient: currentUserId, status: FriendshipStatus.ACCEPTED }
       ]
     });
 
@@ -221,7 +240,22 @@ export const unfriendUser = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Friendship not found' });
     }
 
+    // Remove the friendship document
     await friendship.deleteOne();
+
+    // ✅ START: Remove friend ID from each User document
+    // This synchronizes the change with your User models.
+
+    // Remove friendId from the current user's friends list
+    await User.findByIdAndUpdate(currentUserId, {
+      $pull: { friends: friendIdToRemove }
+    });
+
+    // Remove the current user's ID from the other user's friends list
+    await User.findByIdAndUpdate(friendIdToRemove, {
+      $pull: { friends: currentUserId }
+    });
+    // ✅ END: Synchronization logic
 
     return res.status(200).json({
       message: 'Friend removed successfully'
@@ -231,6 +265,7 @@ export const unfriendUser = async (req: Request, res: Response) => {
     return res.status(500).json({ message: 'Server error' });
   }
 };
+
 
 /**
  * @desc    Block a user

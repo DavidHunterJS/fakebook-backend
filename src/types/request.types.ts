@@ -14,7 +14,7 @@ export interface S3UploadRequest extends Request {
 
 // For controllers where you know auth middleware has been applied
 export interface AuthenticatedRequest extends S3UploadRequest {
-  user: {  // Not optional here
+  user?: {  // Optional here
     id: string;
     [key: string]: any;
   };

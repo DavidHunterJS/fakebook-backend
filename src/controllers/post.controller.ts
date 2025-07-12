@@ -13,26 +13,9 @@ import { IUser } from '../types/user.types'; // Adjust path
 import { S3UploadRequest, FileWithS3 } from '../types/file.types';
 import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
 
+
 interface PaginationQuery { page?: string; limit?: string; }
 
-// Import or define transformUserImageUrls helper
-// This helper MUST be available in this file's scope
-// Example placeholder definition:
-// const getFileUrl = (filename: string | undefined | null, type: string): string => {
-//     if (!filename) return '';
-//     const baseUrl = process.env.BASE_URL || 'http://localhost:5000';
-//     const pathSegment = type === 'cover' ? 'covers' : type === 'post' ? 'posts' : type;
-//     return `${baseUrl}/uploads/${pathSegment}/${filename}`;
-// };
-// const transformUserImageUrls = (user: any): any => {
-//   if (!user || typeof user === 'string') return user;
-//   const userData = typeof user.toObject === 'function' ? user.toObject() : { ...user };
-//   return {
-//     ...userData,
-//     profilePicture: getFileUrl(userData.profilePicture, 'profile'),
-//     coverPhoto: getFileUrl(userData.coverPhoto, 'cover'),
-//   };
-// };
 // Types for request parameters and query
 interface PostIdParam {
   id: string;
@@ -57,7 +40,7 @@ interface PaginationQuery {
 
 // Create interfaces for your route parameters
 interface PostIdParam {
-  postId: string;
+  id: string;
 }
 
 
@@ -183,8 +166,8 @@ export const getPosts = async (req: Request, res: Response): Promise<void> => {
 
 
 /**
- * @route   GET api/posts (or api/posts/feed)
- * @desc    Get all posts for feed
+ * @route   GET api/posts/feed
+ * @desc    Get posts for the user's main feed
  * @access  Private
  */
 export const getFeedPosts = async (
@@ -201,89 +184,72 @@ export const getFeedPosts = async (
     const limit = parseInt(req.query.limit || '10');
     const skip = (page - 1) * limit;
 
-    const currentUser = await User.findById(userId).select('friends blockedUsers savedPosts').lean();
+    const currentUser = await User.findById(userId)
+      .select('friends blockedUsers savedPosts')
+      .lean();
+      
     if (!currentUser) {
       return res.status(404).json({ message: 'User not found' });
     }
 
     const usersWhoBlockedMe = await User.find({ blockedUsers: userId }).select('_id').lean();
+    const usersWhoBlockedMeIds = usersWhoBlockedMe.map(user => user._id);
     const excludedUserIds = [
-      ...(currentUser.blockedUsers || []).map(id => new mongoose.Types.ObjectId(id.toString())),
-      ...usersWhoBlockedMe.map(user => user._id),
+      ...(currentUser.blockedUsers || []),
+      ...usersWhoBlockedMeIds,
     ];
 
-    const friendObjectIds = (currentUser.friends || []).map(id => new mongoose.Types.ObjectId(id.toString()));
-    const query = {
+    // ✅ This is the query from our last attempt.
+    let query = {
       $or: [
         { user: new mongoose.Types.ObjectId(userId) },
         {
-          user: { $in: friendObjectIds, $nin: excludedUserIds },
-          visibility: { $in: ['public', 'friends'] }
+          user: { $nin: excludedUserIds },
+          $or: [
+            { visibility: 'public' },
+            {
+              visibility: 'friends',
+              user: { $in: currentUser.friends || [] },
+            },
+          ],
         },
-        {
-          user: { $nin: [...friendObjectIds, new mongoose.Types.ObjectId(userId), ...excludedUserIds] },
-          visibility: 'public'
-        }
-      ]
+      ],
     };
 
-    // Fetch posts, selecting necessary fields including 'media'
+    // 🧪 ISOLATION TEST: Uncomment the line below to run a much simpler query.
+    // If this test finds posts, the problem is in the complex query structure.
+    // If it STILL finds no posts, the problem is your data (e.g., no 'friends' posts exist).
+    // query = { visibility: 'friends', user: { $in: currentUser.friends || [] } };
+
+
     const posts = await Post.find(query)
-      .populate<{ user: IUser }>('user', 'username firstName lastName profilePicture') // Populate user details needed
-      .select('text user likes comments createdAt media visibility') // Ensure media is selected
+      .populate<{ user: IUser }>('user', 'username firstName lastName profilePicture')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .lean(); // Use lean for performance
+      .lean();
+
+    // Another useful log to see what the query actually found
+    console.log(`Found ${posts.length} posts with the current query.`);
 
     const total = await Post.countDocuments(query);
-
-    // Add engagement data and transform user image URLs
     const postsWithEngagement = await Promise.all(
-      posts.map(async (post) => { // 'post' here is already a plain JS object because of .lean()
+      posts.map(async (post) => {
         const likesCount = post.likes?.length ?? 0;
         const commentsCount = await Comment.countDocuments({ post: post._id });
         const isLiked = (post.likes || []).some(like => like?.toString() === userId);
         const isSaved = (currentUser.savedPosts || []).some(savedId => savedId?.toString() === post._id.toString());
-
-        // Transform the populated user object within the post
-        // const transformedUser = post.user ? transformUserImageUrls(post.user) : null;
-
-        // --- CORRECTION HERE ---
-        // Directly spread the 'post' object (which is already lean)
-        // and ensure all needed fields are carried over.
-        return {
-          _id: post._id, // Ensure essential fields are present
-          text: post.text,
-          user: post.user, // Use the transformed user
-          likes: post.likes,
-          comments: post.comments, // Or maybe just commentsCount is needed?
-          createdAt: post.createdAt,
-          media: post.media, // Explicitly include media from the lean post object
-          visibility: post.visibility,
-          // Add calculated fields
-          likesCount,
-          commentsCount,
-          isLiked,
-          isSaved
-        };
-        // --- END CORRECTION ---
+        return { ...post, likesCount, commentsCount, isLiked, isSaved };
       })
     );
 
-    // Optional: Log just before sending to confirm 'media' is present
-    console.log('[getFeedPosts] Data being sent to frontend:', JSON.stringify(postsWithEngagement, null, 2));
-
     return res.json({
       posts: postsWithEngagement,
-      pagination: {
-        total,
-        page,
-        pages: Math.ceil(total / limit)
-      }
+      pagination: { total, page, pages: Math.ceil(total / limit) },
     });
   } catch (err) {
-    console.error('Error in getFeedPosts:', (err as Error).message, (err as Error).stack);
+    const error = err as Error;
+    console.error('Error in getFeedPosts:', error.message, error.stack);
     return res.status(500).send('Server error');
   }
 };
@@ -405,80 +371,68 @@ export const getPostById = async (
   res: Response
 ): Promise<Response> => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    if (!req.user) {
+    // 1. Assert custom request type to safely access 'user'
+    const user = (req as unknown as AuthenticatedRequest).user;
+    if (!user) {
       return res.status(401).json({ message: 'Not authorized' });
     }
 
-    const post = await Post.findById(req.params.id)
-      .populate('user', 'username firstName lastName profilePicture')
-      .populate('tags', 'username firstName lastName profilePicture');
+    // 2. Fetch data in parallel, now with .lean() on the post query
+    const [post, currentUser] = await Promise.all([
+      Post.findById(req.params.id)
+          .populate<{ user: IUser }>('user', 'username firstName lastName profilePicture blockedUsers friends')
+          .lean(), // <-- Added .lean() for performance
+      User.findById(user.id).select('friends savedPosts blockedUsers').lean()
+    ]);
 
-    if (!post) {
+    if (!post || !currentUser) {
+      return res.status(404).json({ message: 'Post or user not found' });
+    }
+
+    const postOwner = post.user;
+    const isOwner = postOwner._id.toString() === currentUser._id.toString();
+
+    // 3. Permission checks (your existing logic is great and remains unchanged)
+    const isBlocked = postOwner.blockedUsers?.some(id => id.toString() === currentUser._id.toString()) ||
+                      currentUser.blockedUsers?.some(id => id.toString() === postOwner._id.toString());
+    
+    if (!isOwner && isBlocked) {
       return res.status(404).json({ message: 'Post not found' });
     }
 
-    // Check if the user can see this post
-    const postOwner = await User.findById(post.user);
-    if (!postOwner) {
-      return res.status(404).json({ message: 'Post owner not found' });
+    if (post.visibility !== 'public' && !isOwner) {
+        if (post.visibility === 'private' || (post.visibility === 'friends' && !postOwner.friends?.some(id => id.toString() === currentUser._id.toString()))) {
+            return res.status(404).json({ message: 'Post not found' });
+        }
     }
-
-    // Get current user
-    const currentUser = await User.findById(req.user.id);
-    if (!currentUser) {
-      return res.status(404).json({ message: 'Current user not found' });
-    }
-
-    // Check if either user has blocked the other
-    const isBlocked = currentUser.blockedUsers.some(id => id.toString() === postOwner.id);
-    const hasBlocked = postOwner.blockedUsers.some(id => id.toString() === req.user!.id);
-
-    if (isBlocked || hasBlocked) {
-      return res.status(403).json({ message: 'Cannot view this post' });
-    }
-
-    // Check post visibility
-    const isOwner = post.user._id.toString() === req.user.id;
-    const isFriend = currentUser.friends.some(id => id.toString() === postOwner.id);
-
-    if (!isOwner && post.visibility === 'private') {
-      return res.status(403).json({ message: 'This post is private' });
-    }
-
-    if (!isOwner && post.visibility === 'friends' && !isFriend) {
-      return res.status(403).json({ message: 'This post is only visible to friends' });
-    }
-
-    // Get comments count and like status
+    
+    // 4. Get engagement data
     const commentsCount = await Comment.countDocuments({ post: post._id });
-    const isLiked = post.likes.some(like => 
-      like instanceof mongoose.Types.ObjectId 
-        ? like.toString() === req.user!.id 
-        : like === req.user!.id
-    );
-    const isSaved = currentUser.savedPosts?.includes(post._id as any) || false;
+    const isLiked = post.likes.some(id => id.toString() === currentUser._id.toString());
+    const isSaved = currentUser.savedPosts?.some(id => id.toString() === post._id.toString()) || false;
 
-    const postObject = post.toObject();
+    // 5. Combine and send (no .toObject() needed because of .lean())
     const postWithEngagement = {
-      ...postObject,
+      ...post,
       likesCount: post.likes.length,
       commentsCount,
       isLiked,
-      isSaved
+      isSaved,
     };
 
     return res.json(postWithEngagement);
   } catch (err) {
     console.error((err as Error).message);
+    if ((err as any).kind === 'ObjectId') {
+        return res.status(404).json({ message: 'Post not found' });
+    }
     return res.status(500).send('Server error');
   }
 };
 
+interface AuthenticatedPostRequest extends Request<PostIdParam> {
+  user: IUser; // or whatever your user type is
+}
 /**
  * @route   PUT api/posts/:id
  * @desc    Update a post
@@ -489,46 +443,95 @@ export const updatePost = async (
   res: Response
 ): Promise<Response> => {
   try {
+    console.log("--- 📥 UPDATE POST CONTROLLER REACHED ---");
+    
+    // Debug: Log what we received
+    console.log("req.files:", req.files);
+    console.log("req.s3Keys:", (req as any).s3Keys);
+    console.log("req.s3Urls:", (req as any).s3Urls);
+    console.log("req.body:", req.body);
+    
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
 
-    if (!req.user) {
+    const user = (req as unknown as AuthenticatedRequest).user;
+    const files = req.files as Express.Multer.File[]; // Standard multer files
+    const s3Keys = (req as any).s3Keys as string[]; // Your S3 keys
+    const s3Urls = (req as any).s3Urls as string[]; // Your S3 URLs
+
+    if (!user) {
       return res.status(401).json({ message: 'Not authorized' });
     }
 
-    const { text, visibility } = req.body;
-
-    // Find post
+    const { text, visibility, shouldRemoveImage } = req.body;
+    console.log(`Fetching post with ID: ${req.params.id}`);
+    
     const post = await Post.findById(req.params.id);
     if (!post) {
       return res.status(404).json({ message: 'Post not found' });
     }
 
-    // Check if user is authorized to update post
-    if (post.user.toString() !== req.user.id) {
-      // Check if the user has the permission to edit any post
-      const currentUser = await User.findById(req.user.id);
+    // Authorization check...
+    if (post.user.toString() !== user.id) {
+      console.log("User is not the owner. Checking admin permissions...");
+      const currentUser = await User.findById(user.id);
       if (!currentUser || !currentUser.permissions?.includes(Permission.EDIT_ANY_POST)) {
         return res.status(403).json({ message: 'Not authorized to edit this post' });
       }
     }
 
-    // Update post fields
+    // Update text and visibility
     if (text !== undefined) post.text = text;
     if (visibility) post.visibility = visibility as PostVisibility;
 
+    // Case 1: New files were uploaded
+    if (files && files.length > 0 && s3Keys && s3Urls) {
+      console.log(`CASE 1 reached. New files detected. Processing upload...`);
+      
+      // If there are old images, delete them all from S3 first
+      if (post.media && post.media.length > 0) {
+        console.log(`Deleting ${post.media.length} old media file(s).`);
+        for (const oldMedia of post.media) {
+          if (oldMedia.key) await s3UploadMiddleware.deleteFile(oldMedia.key);
+        }
+      }
+
+      // Create new media array using S3 data
+      post.media = files.map((file, index) => ({
+        url: s3Urls[index],
+        key: s3Keys[index],
+        type: file.mimetype.startsWith('image') ? 'image' : 'video',
+      }));
+
+      console.log("New media array created:", post.media);
+    }
+    // Case 2: The "Remove Image" checkbox is checked (and no new files were uploaded)
+    else if (JSON.parse(shouldRemoveImage || 'false') === true) {
+      console.log("'Remove Image' flag is true. Deleting existing media...");
+      if (post.media && post.media.length > 0) {
+        for (const oldMedia of post.media) {
+          if (oldMedia.key) await s3UploadMiddleware.deleteFile(oldMedia.key);
+        }
+        post.media = [];
+        console.log("Old media deleted and array cleared.");
+      }
+    }
+
+    console.log("💾 Saving updated post to database...");
     await post.save();
+    console.log("Database save successful. Populating user data...");
+    
+    const updatedPost = await post.populate([
+      { path: 'user', select: 'username firstName lastName profilePicture' },
+      { path: 'tags', select: 'username firstName lastName profilePicture' }
+    ]);
 
-    // Return updated post
-    const updatedPost = await Post.findById(post._id)
-      .populate('user', 'username firstName lastName profilePicture')
-      .populate('tags', 'username firstName lastName profilePicture');
-
+    console.log("✅ Update process complete. Sending response.");
     return res.json(updatedPost);
   } catch (err) {
-    console.error((err as Error).message);
+    console.error("--- 💥 UPDATE POST CONTROLLER CRASHED ---", err);
     return res.status(500).send('Server error');
   }
 };

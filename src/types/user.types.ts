@@ -61,3 +61,7 @@ export interface IUserPayload {
 export interface IAuthPayload {
   user: IUserPayload;
 }
+
+export interface AuthenticatedRequest extends Request {
+  user?: IUser;
+}

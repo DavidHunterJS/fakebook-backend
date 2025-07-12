@@ -1,18 +1,16 @@
 // src/routes/post.routes.ts
-import express, { Router } from 'express';
+import express, { Router, RequestHandler } from 'express';
 import { body, param, query } from 'express-validator';
 import * as postController from '../controllers/post.controller';
 import authMiddleware from '../middlewares/auth.middleware';
-import uploadMiddleware from '../middlewares/upload.middleware';
 import { hasPermission } from '../middlewares/role.middleware';
 import { Permission } from '../config/roles';
 import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
-import { FileWithS3 } from '../types/file.types';
-
+import {PostIdParam} from '../types/post.types';
 const router: Router = express.Router();
 
 // Apply auth middleware to all routes
-router.use(authMiddleware);
+router.use('/',authMiddleware);
 
 
 router.post(
@@ -105,24 +103,24 @@ router.get(
  * @desc    Update a post
  * @access  Private
  */
-router.put(
+router.put<PostIdParam>( // <--- FIX IS HERE
   '/:id',
-  [
-    param('id')
-      .isMongoId()
-      .withMessage('Invalid post ID'),
+  // 1. Use the same S3 middleware as the create route to handle file uploads
+  s3UploadMiddleware.postMedia,
+  // 2. Validation middleware
+  ...[
+    param('id').isMongoId().withMessage('Invalid post ID'),
     body('text')
       .optional()
       .isString()
-      .trim()
-      .isLength({ min: 1, max: 5000 })
-      .withMessage('Post text must be between 1 and 5000 characters'),
+      .trim(),
     body('visibility')
       .optional()
       .isIn(['public', 'friends', 'private'])
-      .withMessage('Visibility must be public, friends, or private')
+      .withMessage('Visibility must be public, friends, or private'),
   ],
-  postController.updatePost
+  // 3. Controller to handle the logic
+  postController.updatePost as RequestHandler<PostIdParam>
 );
 
 /**
