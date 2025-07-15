@@ -149,7 +149,19 @@ const postMediaUpload = async (req: Request, res: Response, next: NextFunction) 
     }
   });
 };
+export const getFileUrl = (key: string | undefined): string | null => {
+  if (!key) {
+    return null;
+  }
+  // This logic handles both S3 and a potential local setup
+  if (!bucketName) {
+    const localBaseUrl = process.env.API_URL || 'http://localhost:5000';
+    return `${localBaseUrl}/uploads/${key}`; // Adjust if your local static path is different
+  }
 
+  // For S3, construct the full URL
+  return `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+};
 // --- 7. Delete Function ---
 const deleteFile = async (key: string): Promise<boolean> => {
   if (!key) return false;
@@ -169,6 +181,7 @@ const s3UploadMiddleware = {
   coverPhoto: coverPhotoUpload,
   postMedia: postMediaUpload,
   deleteFile: deleteFile,
+  getFileUrl: getFileUrl,
 };
 
 export default s3UploadMiddleware;
