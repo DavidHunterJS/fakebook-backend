@@ -17,6 +17,7 @@ import friendRoutes from './routes/friend.routes';
 import notificationRoutes from './routes/notification.routes';
 import adminRoutes from './routes/admin.routes';
 import generationRoutes from './routes/generation.routes';
+import rewriteRoutes from './routes/rewrite.routes';
 
 // Load env vars
 dotenv.config();
@@ -70,6 +71,7 @@ app.use('/api/friends', friendRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', generationRoutes);
+app.use('/api', rewriteRoutes);
 
 // Catch-all route handler (must be placed after all other routes)
 app.use('*', (req: Request, res: Response) => {
