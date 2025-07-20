@@ -56,7 +56,10 @@ const PostSchema = new Schema<IPost>(
     },
     text: {
       type: String,
-      required: true
+      required: function(this: IPost): boolean {
+        const hasMedia = this.media && this.media.length > 0;
+        return !hasMedia; // If there is NO media, 'text' is required.
+      },
     },
     media: [MediaItemSchema],
     visibility: {
