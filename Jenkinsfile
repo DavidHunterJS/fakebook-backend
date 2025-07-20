@@ -12,6 +12,10 @@ pipeline {
         // HEROKU_APP_NAME will be refined in the Initialize or Create Feature Environment stage
         HEROKU_API_KEY = credentials('HEROKU_API_KEY') // Ensure this credential ID is correct in Jenkins
         DEPLOY_ENV = "${params.ENVIRONMENT}"
+        S3_BUCKET_NAME        = credentials('S3_BUCKET_NAME')
+        AWS_ACCESS_KEY_ID     = credentials('AWS_ACCESS_KEY_ID')
+        AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
+        AWS_REGION            = credentials('AWS_REGION')
     }
 
     tools {
