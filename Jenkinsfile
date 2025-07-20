@@ -10,8 +10,9 @@ pipeline {
     environment {
         // Dynamic app name based on environment and potentially branch type
         // HEROKU_APP_NAME will be refined in the Initialize or Create Feature Environment stage
-        HEROKU_API_KEY = credentials('HEROKU_API_KEY') // Ensure this credential ID is correct in Jenkins
-        DEPLOY_ENV = "${params.ENVIRONMENT}"
+        HEROKU_API_KEY        = credentials('HEROKU_API_KEY') // Ensure this credential ID is correct in Jenkins
+        DEPLOY_ENV            = "${params.ENVIRONMENT}"
+        JWT_SECRET            = credentials('JWT_SECRET')
         S3_BUCKET_NAME        = credentials('S3_BUCKET_NAME')
         AWS_ACCESS_KEY_ID     = credentials('AWS_ACCESS_KEY_ID')
         AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
@@ -68,12 +69,9 @@ pipeline {
 
         stage('Run Tests') {
             steps {
-                // This 'withCredentials' block securely injects the Jenkins secret
-                // into an environment variable named JWT_SECRET for the commands inside.
-                withCredentials([string(credentialsId: 'JWT_SECRET', variable: 'JWT_SECRET')]) {
-                    // This command will now run with process.env.JWT_SECRET set correctly.
-                    sh 'npm run test:ci || echo "Tests failed but deployment will continue (non-critical)"'
-                }
+                // The withCredentials wrapper is no longer needed here
+                // || echo "Tests failed but deployment will continue (non-critical)"'
+                sh 'npm run test:ci 
             }
         }
 
