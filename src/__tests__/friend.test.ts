@@ -128,7 +128,7 @@ describe('Friend Controller', () => {
       .set('Authorization', 'Bearer dummy_token');
 
     expect(res.statusCode).toEqual(200);
-    expect(res.body.message).toEqual('Friend request accepted');
+    expect(res.body.message).toEqual('Friend request accepted and users are now friends.');
     expect(res.body.friendship.status).toEqual(FriendshipStatus.ACCEPTED);
 
     const updatedFriendship = await Friend.findById(pendingFriendship._id);
