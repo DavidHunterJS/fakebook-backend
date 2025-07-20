@@ -71,7 +71,7 @@ pipeline {
             steps {
                 // The withCredentials wrapper is no longer needed here
                 // || echo "Tests failed but deployment will continue (non-critical)"'
-                sh 'npm run test:ci 
+                sh 'npm run test:ci'
             }
         }
 
