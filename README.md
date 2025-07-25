@@ -38,6 +38,8 @@ Fakebook is a full-stack social media application that demonstrates professional
 
 - **🔐 User Authentication** - Secure signup/login with JWT tokens
 - **📝 Social Posts** - Create, edit, and delete posts with rich text
+- **🤖 AI-Generated Text** - Craft post content with assistance from a generative AI model.
+- **🎨 AI-Generated Images** - Create unique images for your posts using text prompts.
 - **❤️ Interactions** - Like, comment, and share posts
 - **👥 Friend System** - Send/accept friend requests, manage connections
 - **📰 News Feed** - Personalized timeline with friends' posts
@@ -62,6 +64,10 @@ Fakebook is a full-stack social media application that demonstrates professional
 ├── JWT # Authentication
 └── Bcrypt # Password hashing
 
+### AI / ML
+├── Replicate #For generative text and image models.
+└── Replicate #npm Package #API client library.
+
 ### DevOps
 ├── Jenkins # CI/CD automation
 ├── Heroku # Cloud platform
@@ -70,18 +76,18 @@ Fakebook is a full-stack social media application that demonstrates professional
 
 # 🏗️-Architecture
 ┌─────────────────────────────────────────────────────────────┐
-│ Client (Next.js) │
+│                     Client (Next.js)                        │
 ├─────────────────────────────────────────────────────────────┤
-│ ↓ HTTPS ↓ │
+│                         ↓ HTTPS ↓                           │
 ├─────────────────────────────────────────────────────────────┤
-│ API Gateway (Express.js) │
+│                 API Gateway (Express.js)                    │
+│ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────┐ │
+│ │ Auth Svc    │ │ Posts Svc   │ │ Friends Svc │ │ AI Svc  │ │
+│ └─────────────┘ └─────────────┘ └─────────────┘ └─────────┘ │
 ├─────────────────────────────────────────────────────────────┤
-│ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ │
-│ │ Auth │ │ Posts │ │ Friends │ ... │
-│ │ Service │ │ Service │ │ Service │ │
-│ └─────────────┘ └─────────────┘ └─────────────┘ │
-├─────────────────────────────────────────────────────────────┤
-│ Database (MongoDB) │
+│         ┌──────────────────┐      ┌──────────────────┐      │
+│         │Database (MongoDB)│      │  GenAI (OpenAI)  │      │
+│         └──────────────────┘      └──────────────────┘      │
 └─────────────────────────────────────────────────────────────┘
 
 ## 🚀 Getting Started
@@ -91,6 +97,7 @@ Fakebook is a full-stack social media application that demonstrates professional
 - Node.js 18+ 
 - MongoDB 5.0+
 - Git
+- API Key from your chosen AI provider (e.g., Replicate)
 
 ### Installation
 
@@ -112,6 +119,7 @@ PORT=5000
 MONGODB_URI=mongodb://localhost:27017/fakebook
 JWT_SECRET=your-secret-key
 CLIENT_URL=http://localhost:3000
+REPLICATE_API_KEY=your-ai-provider-api-key
 ## Frontend .env.local:
 NEXT_PUBLIC_API_URL=http://localhost:5000
 ## Start MongoDB
@@ -199,16 +207,19 @@ Content-Type: application/json
 }
 ## Posts
 GET /api/posts
-Authorization: Bearer <token>
-
 POST /api/posts
-Authorization: Bearer <token>
-Content-Type: application/json
 
-{
-  "content": "Hello, Fakebook!",
-  "image": "optional-image-url"
-}
+POST /api/posts/generate-text
+
+- Description: Generates post text based on a prompt.
+
+- Body: { "prompt": "Write a post about..." }
+
+POST /api/posts/generate-image
+
+-  Description: Generates an image based on a prompt.
+
+-  Body: { "prompt": "A cat wearing a wizard hat..." }
 ## Friends
 GET /api/friends
 Authorization: Bearer <token>
@@ -229,7 +240,11 @@ npm run test:coverage
 ## Run in watch mode
 npm run test:watch
 
-# 📊 Project Structure
+# 📊 Project StrucAI / Machine Learning
+
+    [e.g., OpenAI API]: For generative text and image models.
+
+    [e.g., openai npm package]: API client library.ture
 fakebook/
 ├── frontend/                 # Next.js frontend
 │   ├── app/                 # App router pages
