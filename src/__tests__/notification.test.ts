@@ -4,6 +4,7 @@ import { app } from '../app';
 import User from '../models/User';
 import Post from '../models/Post';
 import Notification from '../models/Notification';
+import Reaction from '../models/Reaction'; // Import the Reaction model
 
 describe('Notification API Endpoints', () => {
   // --- Test Suite Setup ---
@@ -15,6 +16,7 @@ describe('Notification API Endpoints', () => {
     await User.deleteMany({ email: { $regex: /_notif_.*@test\.com$/ } });
     await Post.deleteMany({});
     await Notification.deleteMany({});
+    await Reaction.deleteMany({}); // Also clean reactions before starting
 
     // Create User A (recipient)
     const userAPayload = {
@@ -52,13 +54,17 @@ describe('Notification API Endpoints', () => {
     postAId = postRes.body.post._id;
   });
   
+  // --- FIX: Clean up Reactions as well to ensure test isolation ---
   afterEach(async () => {
     await Notification.deleteMany({});
+    await Reaction.deleteMany({}); // This ensures no reactions leak between tests
   });
 
   afterAll(async () => {
     await User.deleteMany({ email: { $regex: /_notif_.*@test\.com$/ } });
     await Post.deleteMany({});
+    await Notification.deleteMany({});
+    await Reaction.deleteMany({});
   });
 
   describe('GET /api/notifications', () => {
@@ -96,7 +102,6 @@ describe('Notification API Endpoints', () => {
 
   describe('GET /api/notifications/unread-count', () => {
     it('should return the correct count of unread notifications', async () => {
-      // --- FIX: Added content and link fields ---
       await Notification.create([
         { recipient: userAId, sender: userBId, type: 'post_like', content: '...', link: '...' },
         { recipient: userAId, sender: userBId, type: 'friend_request', content: '...', link: '...' },
@@ -114,7 +119,6 @@ describe('Notification API Endpoints', () => {
   
   describe('PUT /api/notifications/:id/read', () => {
     it('should mark a specific notification as read', async () => {
-      // --- FIX: Added content and link fields ---
       const notif = await Notification.create({ 
         recipient: userAId, 
         sender: userBId, 
@@ -133,7 +137,6 @@ describe('Notification API Endpoints', () => {
     });
     
     it('should return 404 if a user tries to mark another user\'s notification as read', async () => {
-      // --- FIX: Added content and link fields ---
       const notifForUserB = await Notification.create({ 
         recipient: userBId, 
         sender: userAId,
@@ -152,7 +155,6 @@ describe('Notification API Endpoints', () => {
   
   describe('PUT /api/notifications/read-all', () => {
     it('should mark all unread notifications as read for the user', async () => {
-      // --- FIX: Added content and link fields ---
       await Notification.create([
         { recipient: userAId, sender: userBId, type: 'post_like', content: '...', link: '...' },
         { recipient: userAId, sender: userBId, type: 'post_comment', content: '...', link: '...' },
@@ -171,7 +173,6 @@ describe('Notification API Endpoints', () => {
 
   describe('DELETE /api/notifications/:id', () => {
     it('should delete a user\'s own notification', async () => {
-      // --- FIX: Added content and link fields ---
       const notif = await Notification.create({ 
         recipient: userAId, 
         sender: userBId,
@@ -190,7 +191,6 @@ describe('Notification API Endpoints', () => {
     });
 
     it('should return 404 when trying to delete another user\'s notification', async () => {
-      // --- FIX: Added content and link fields ---
       const notifForUserB = await Notification.create({ 
         recipient: userBId, 
         sender: userAId,
