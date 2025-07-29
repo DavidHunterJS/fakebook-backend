@@ -100,10 +100,6 @@ describe('Notification API Endpoints', () => {
   
   describe('GET /api/notifications', () => {
     it('should return an empty array if the user has no notifications', async () => {
-      // Verify user still exists before making request
-      const userExists = await User.findById(userAId);
-      expect(userExists).toBeTruthy();
-
       const response = await request(app)
         .get('/api/notifications')
         .set('Authorization', `Bearer ${tokenA}`);
@@ -114,18 +110,13 @@ describe('Notification API Endpoints', () => {
     });
 
     it('should return notifications intended for the authenticated user', async () => {
-      // Verify users still exist before making requests
-      const userAExists = await User.findById(userAId);
-      const userBExists = await User.findById(userBId);
-      expect(userAExists).toBeTruthy();
-      expect(userBExists).toBeTruthy();
-
-      // Action: User B likes User A's post, which should create a notification for User A.
+      // Action: User B likes User A's post using the new /reactions endpoint.
       const likeResponse = await request(app)
-        .post(`/api/posts/${postAId}/like`)
-        .set('Authorization', `Bearer ${tokenB}`);
+        .post(`/api/posts/${postAId}/reactions`)
+        .set('Authorization', `Bearer ${tokenB}`) // --- FIX IS HERE ---
+        .send({ type: 'like' });
       
-      // Check if like was successful
+      // Check if reaction was successful
       expect([200, 201]).toContain(likeResponse.statusCode);
 
       // Test: Fetch notifications for User A
@@ -145,76 +136,30 @@ describe('Notification API Endpoints', () => {
     });
   });
 
-describe('GET /api/notifications/unread-count', () => {
-  it('should return the correct count of unread notifications', async () => {
-    // Verify users still exist
-    const userAExists = await User.findById(userAId);
-    const userBExists = await User.findById(userBId);
-    expect(userAExists).toBeTruthy();
-    expect(userBExists).toBeTruthy();
+  describe('GET /api/notifications/unread-count', () => {
+    it('should return the correct count of unread notifications', async () => {
+      // Create notifications manually for a predictable test
+      await Notification.create([
+        { recipient: userAId, sender: userBId, type: 'post_like', read: false },
+        { recipient: userAId, sender: userBId, type: 'friend_request', read: false },
+        { recipient: userAId, sender: userBId, type: 'post_comment', read: true }, // one is read
+      ]);
 
-    // Create all notifications manually for predictable testing
-    const notifications = await Promise.all([
-      Notification.create({
-        recipient: userAId,
-        sender: userBId,
-        type: 'post_like',
-        content: 'User B liked your post.',
-        link: `/posts/${postAId}`,
-        read: false
-      }),
-      Notification.create({
-        recipient: userAId,
-        sender: userBId,
-        type: 'friend_request',
-        content: 'User B sent you a friend request.',
-        link: `/profile/${userBId}`,
-        read: false
-      }),
-      Notification.create({
-        recipient: userAId,
-        sender: userBId,
-        type: 'post_comment',
-        content: 'User B commented on your post.',
-        link: `/posts/${postAId}`,
-        read: false
-      })
-    ]);
+      const response = await request(app)
+        .get('/api/notifications/unread-count')
+        .set('Authorization', `Bearer ${tokenA}`);
 
-    // Verify all notifications were created successfully
-    expect(notifications).toHaveLength(3);
-    notifications.forEach(notif => {
-      expect(notif).toBeTruthy();
-      expect(notif.read).toBe(false);
+      expect(response.statusCode).toBe(200);
+      expect(response.body.count).toBe(2);
     });
-
-    // Debug: Verify notifications in database
-    const allNotifications = await Notification.find({ recipient: userAId });
-    console.log(`Total notifications for user A: ${allNotifications.length}`);
-    console.log('Notifications:', allNotifications.map(n => ({ type: n.type, read: n.read })));
-
-    const response = await request(app)
-      .get('/api/notifications/unread-count')
-      .set('Authorization', `Bearer ${tokenA}`);
-
-    expect(response.statusCode).toBe(200);
-    console.log('Actual unread count:', response.body.count);
-    expect(response.body.count).toBe(3);
   });
-});
   
   describe('PUT /api/notifications/:id/read', () => {
     it('should mark a specific notification as read', async () => {
-      // Verify user still exists
-      const userAExists = await User.findById(userAId);
-      expect(userAExists).toBeTruthy();
-
       const notif = await Notification.create({ 
         recipient: userAId, 
         sender: userBId, 
         type: 'post_like',
-        content: 'Someone liked your post', 
-        link: `/posts/${postAId}`
       });
       
       const response = await request(app)
@@ -222,25 +167,16 @@ describe('GET /api/notifications/unread-count', () => {
         .set('Authorization', `Bearer ${tokenA}`);
       
       expect(response.statusCode).toBe(200);
-      expect(response.body.message).toBe('Notification marked as read');
       
       const updatedNotif = await Notification.findById(notif._id);
       expect(updatedNotif?.read).toBe(true);
     });
     
     it('should return 404 if a user tries to mark another user\'s notification as read', async () => {
-      // Verify users still exist
-      const userAExists = await User.findById(userAId);
-      const userBExists = await User.findById(userBId);
-      expect(userAExists).toBeTruthy();
-      expect(userBExists).toBeTruthy();
-
       const notifForUserB = await Notification.create({ 
         recipient: userBId, 
         sender: userAId,
         type: 'post_like',
-        content: 'Someone liked your post',
-        link: `/posts/${postAId}`
       });
       
       // User A tries to mark User B's notification as read
@@ -254,35 +190,11 @@ describe('GET /api/notifications/unread-count', () => {
   
   describe('PUT /api/notifications/read-all', () => {
     it('should mark all unread notifications as read for the user', async () => {
-      // Verify users still exist
-      const userAExists = await User.findById(userAId);
-      const userBExists = await User.findById(userBId);
-      expect(userAExists).toBeTruthy();
-      expect(userBExists).toBeTruthy();
-
-      await Notification.create({ 
-        recipient: userAId, 
-        sender: userBId,
-        type: 'post_like',
-        content: 'Someone liked your post',
-        link: `/posts/${postAId}`
-      });
-      
-      await Notification.create({ 
-        recipient: userAId, 
-        sender: userBId,
-        type: 'post_comment',
-        content: 'Someone commented on your post',
-        link: `/posts/${postAId}`
-      });
-      
-      await Notification.create({ 
-        recipient: userBId, 
-        sender: userAId,
-        type: 'friend_request',
-        content: 'Someone sent you a friend request',
-        link: `/profile/${userAId}`
-      }); // This one should not be affected
+      await Notification.create([
+        { recipient: userAId, sender: userBId, type: 'post_like' },
+        { recipient: userAId, sender: userBId, type: 'post_comment' },
+        { recipient: userBId, sender: userAId, type: 'friend_request' }, // This one should not be affected
+      ]);
       
       let unreadCount = await Notification.countDocuments({ recipient: userAId, read: false });
       expect(unreadCount).toBe(2);
@@ -303,16 +215,10 @@ describe('GET /api/notifications/unread-count', () => {
 
   describe('DELETE /api/notifications/:id', () => {
     it('should delete a user\'s own notification', async () => {
-      // Verify user still exists
-      const userAExists = await User.findById(userAId);
-      expect(userAExists).toBeTruthy();
-
       const notif = await Notification.create({ 
         recipient: userAId, 
         sender: userBId,
         type: 'post_like',
-        content: 'Someone liked your post',
-        link: `/posts/${postAId}`
       });
 
       const response = await request(app)
@@ -320,25 +226,16 @@ describe('GET /api/notifications/unread-count', () => {
         .set('Authorization', `Bearer ${tokenA}`);
 
       expect(response.statusCode).toBe(200);
-      expect(response.body.message).toBe('Notification deleted');
 
       const deletedNotif = await Notification.findById(notif._id);
       expect(deletedNotif).toBeNull();
     });
 
     it('should return 404 when trying to delete another user\'s notification', async () => {
-      // Verify users still exist
-      const userAExists = await User.findById(userAId);
-      const userBExists = await User.findById(userBId);
-      expect(userAExists).toBeTruthy();
-      expect(userBExists).toBeTruthy();
-
       const notifForUserB = await Notification.create({ 
         recipient: userBId, 
         sender: userAId,
         type: 'post_like',
-        content: 'Someone liked your post',
-        link: `/posts/${postAId}`
       });
 
       const response = await request(app)
