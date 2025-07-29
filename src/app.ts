@@ -73,7 +73,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', generationRoutes);
 app.use('/api', rewriteRoutes);
-app.use('/api', imagegenRouter )
+app.use('/api', imagegenRouter );
 
 // Catch-all route handler (must be placed after all other routes)
 app.use('*', (req: Request, res: Response) => {
