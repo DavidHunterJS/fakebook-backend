@@ -9,9 +9,11 @@ import User from '../models/User';
 import Comment from '../models/Comment';
 import { Permission } from '../config/roles';
 import { NotificationService } from '../services/notification.service';
-import { IUser } from '../types/user.types'; // Adjust path
-import { S3UploadRequest, FileWithS3 } from '../types/file.types';
+import { IUser } from '../types/user.types';
+import { AuthenticatedRequest } from '../types/request.types';
 import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
+import Reaction, { ReactionType, REACTION_TYPES } from '../models/Reaction';
+
 
 
 interface PaginationQuery { page?: string; limit?: string; }
@@ -20,11 +22,7 @@ interface PaginationQuery { page?: string; limit?: string; }
 interface PostIdParam {
   id: string;
 }
-interface AuthenticatedRequest extends S3UploadRequest {
-  user: {
-    id: string;
-  };
-}
+
 interface CommentIdParam {
   commentId: string;
 }
@@ -117,9 +115,6 @@ export const createPost = async (req: Request, res: Response): Promise<Response 
     res.status(500).json({ error: 'Server error' });
   }
 };
-
-
-
 
 /**
  * Get all posts (with pagination)
@@ -591,7 +586,6 @@ export const deletePost = async (req: Request, res: Response): Promise<void> => 
   }
 };
 
-// src/controllers/post.controller.ts -> likePost function
 
 /**
  * @route   POST api/posts/:id/like
