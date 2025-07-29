@@ -54,10 +54,10 @@ describe('Notification API Endpoints', () => {
     postAId = postRes.body.post._id;
   });
   
-  // --- FIX: Clean up Reactions as well to ensure test isolation ---
+  // Clean up collections after each test to ensure isolation
   afterEach(async () => {
     await Notification.deleteMany({});
-    await Reaction.deleteMany({}); // This ensures no reactions leak between tests
+    await Reaction.deleteMany({});
   });
 
   afterAll(async () => {
@@ -102,6 +102,7 @@ describe('Notification API Endpoints', () => {
 
   describe('GET /api/notifications/unread-count', () => {
     it('should return the correct count of unread notifications', async () => {
+      // --- FIX: Added content and link fields to all manual creations ---
       await Notification.create([
         { recipient: userAId, sender: userBId, type: 'post_like', content: '...', link: '...' },
         { recipient: userAId, sender: userBId, type: 'friend_request', content: '...', link: '...' },
