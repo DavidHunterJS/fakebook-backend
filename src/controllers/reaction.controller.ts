@@ -1,9 +1,14 @@
 import { Response } from 'express';
 import { validationResult } from 'express-validator';
-import mongoose from 'mongoose'; // Ensure mongoose is imported
+import mongoose from 'mongoose';
 import Post from '../models/Post';
-import Reaction, { ReactionType } from '../models/Reaction';
+import Reaction from '../models/Reaction';
+import Notification from '../models/Notification'; // Import the Notification model
 import { AuthenticatedRequest } from '../types/request.types';
+import { ReactionType } from '../models/Reaction'; // Assuming ReactionType is defined here
+
+// --- FIX: Add the missing type definition for ReactionCounts ---
+type ReactionCounts = Record<ReactionType, number>;
 
 const reactionController = {
   addOrUpdateReaction: async (req: AuthenticatedRequest, res: Response) => {
@@ -20,33 +25,35 @@ const reactionController = {
     const userId = req.user.id;
     const { type } = req.body as { type: ReactionType };
 
-    // --- START OF NEW DEBUGGING LOGS ---
-    console.log('--- DEBUGGING REACTION CONTROLLER ---');
-    console.log(`[${new Date().toISOString()}] Received request for Post ID:`, postId);
-    // This tells us the status of the database connection: 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
-    console.log('Mongoose Connection Ready State:', mongoose.connection.readyState); 
-    console.log('Looking for post...');
-    // --- END OF NEW DEBUGGING LOGS ---
-
     try {
       const postExists = await Post.findById(postId);
-
-      // --- MORE DEBUGGING ---
-      console.log('Result of Post.findById():', postExists); // This will be null if not found
-      // --- END OF MORE DEBUGGING ---
-
       if (!postExists) {
-        console.error(`--> Post with ID ${postId} NOT FOUND in database.`); // Explicit log on failure
         return res.status(404).json({ msg: 'Post not found.' });
       }
 
-      console.log('--> Post found successfully! Proceeding with reaction.');
-      
+      // Check if a reaction from this user already exists on this post
+      const existingReaction = await Reaction.findOne({ postId, userId });
+
       const reaction = await Reaction.findOneAndUpdate(
         { postId, userId },
         { type },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
+
+      // --- Notification Logic ---
+      // Only create a notification if it's a new reaction (not an update)
+      // and the user is not reacting to their own post.
+      const isNotOwnPost = postExists.user.toString() !== userId;
+      if (!existingReaction && isNotOwnPost) {
+        await Notification.create({
+          recipient: postExists.user,
+          sender: userId,
+          type: 'post_like', // You can use a more generic 'post_reaction' if you prefer
+          content: `${req.user.username} reacted to your post.`,
+          link: `/posts/${postId}`,
+        });
+      }
+      // --- End of Notification Logic ---
 
       const reactionCounts = await Reaction.getReactionCounts(postId);
 
@@ -57,7 +64,7 @@ const reactionController = {
       });
 
     } catch (err: any) {
-      console.error('--- CATCH BLOCK ERROR in addOrUpdateReaction: ---', err);
+      console.error('Error in addOrUpdateReaction:', err.message);
       if (err.name === 'CastError') {
         return res.status(400).json({ msg: 'Invalid Post ID format.' });
       }
@@ -65,7 +72,6 @@ const reactionController = {
     }
   },
 
-  // (The removeReaction function remains the same)
   removeReaction: async (req: AuthenticatedRequest, res: Response) => {
     if (!req.user?.id) {
       return res.status(401).json({ msg: 'User not authenticated. Access denied.' });
@@ -74,10 +80,18 @@ const reactionController = {
     const userId = req.user.id;
     try {
       const deletedReaction = await Reaction.findOneAndDelete({ postId, userId });
-      if (!deletedReaction) {
-        return res.status(404).json({ msg: 'Reaction not found for this user on the specified post.' });
+      
+      // If a reaction was successfully deleted, also delete the corresponding notification
+      if (deletedReaction) {
+        await Notification.deleteOne({
+          sender: userId,
+          type: 'post_like',
+          link: `/posts/${postId}`
+        });
       }
+      
       const reactionCounts = await Reaction.getReactionCounts(postId);
+
       return res.status(200).json({
         message: 'Reaction removed successfully.',
         counts: reactionCounts,
@@ -92,44 +106,28 @@ const reactionController = {
   },
 };
 
-// In your reactionController file
 export const getReactions = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id: postId } = req.params;
-    const userId = req.user?.id; // Assuming you have user info from auth middleware
+    const userId = req.user?.id;
 
-    // Get all reactions for this post
     const reactions = await Reaction.find({ postId });
     
-    // Calculate counts
-    const counts = {
-      like: 0,
-      love: 0,
-      haha: 0,
-      wow: 0,
-      sad: 0,
-      angry: 0,
-      care: 0,
-      clap: 0,
-      fire: 0,
-      thinking: 0,
-      celebrate: 0,
-      mind_blown: 0,
-      heart_eyes: 0,
-      laugh_cry: 0,
-      shocked: 0,
-      cool: 0,
-      party: 0,
-      thumbs_down: 0
+    const defaultCounts: ReactionCounts = {
+      like: 0, love: 0, haha: 0, wow: 0, sad: 0, angry: 0, care: 0, clap: 0,
+      fire: 0, thinking: 0, celebrate: 0, mind_blown: 0, heart_eyes: 0,
+      laugh_cry: 0, shocked: 0, cool: 0, party: 0, thumbs_down: 0
     };
     
-    reactions.forEach(reaction => {
-      if (counts.hasOwnProperty(reaction.type)) {
-        counts[reaction.type]++;
+    const counts = reactions.reduce((acc, reaction) => {
+      // Create a mutable copy of the accumulator
+      const newAcc = { ...acc };
+      if (newAcc.hasOwnProperty(reaction.type)) {
+        newAcc[reaction.type]++;
       }
-    });
+      return newAcc;
+    }, defaultCounts);
     
-    // Find user's reaction if authenticated
     let userReaction = null;
     if (userId) {
       const userReactionDoc = reactions.find(r => r.userId.toString() === userId);

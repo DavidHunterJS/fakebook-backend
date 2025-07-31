@@ -1,4 +1,4 @@
-// src/routes/imagegen.ts or in your main app file
+// src/routes/imagegen.ts
 import express, { Request, Response } from 'express';
 import Replicate from 'replicate';
 
@@ -14,6 +14,19 @@ interface GenerateImageRequest {
   parameters: Record<string, any>;
 }
 
+interface GenerateTextRequest {
+  model: string;
+  parameters: {
+    prompt: string;
+    system_prompt?: string;
+    max_tokens?: number;
+    extended_thinking?: boolean;
+    max_image_resolution?: number;
+    thinking_budget_tokens?: number;
+    image?: string;
+  };
+}
+
 // Model mappings to actual Replicate model versions
 const MODEL_MAPPINGS: Record<string, `${string}/${string}` | `${string}/${string}:${string}`> = {
   'stable-diffusion-xl': 'stability-ai/stable-diffusion-3.5-large',
@@ -21,9 +34,27 @@ const MODEL_MAPPINGS: Record<string, `${string}/${string}` | `${string}/${string
   'flux-schnell': 'black-forest-labs/flux-schnell',
   'google-imagen4': 'google/imagen-4',
   'bytedance-seedream3': 'bytedance/seedream-3',
-  'recraft-v3-svg': 'recraft-ai/recraft-v3-svg'
+  'recraft-v3-svg': 'recraft-ai/recraft-v3-svg',
+  'luma-photon': 'luma/photon', // Replace with actual model name
+  'claude-4-sonnet': 'anthropic/claude-4-sonnet'
 };
 
+// Define which models generate images vs text
+const IMAGE_GENERATION_MODELS = [
+  'stable-diffusion-xl',
+  'midjourney-style',
+  'flux-schnell',
+  'google-imagen4',
+  'bytedance-seedream3',
+  'recraft-v3-svg',
+  'luma-photon'
+];
+
+const TEXT_GENERATION_MODELS = [
+  'claude-4-sonnet'
+];
+
+// Existing image generation endpoint
 router.post('/generate-image-advanced', async (req: Request<{}, {}, GenerateImageRequest>, res: Response) => {
   try {
     const { model, parameters } = req.body;
@@ -32,6 +63,13 @@ router.post('/generate-image-advanced', async (req: Request<{}, {}, GenerateImag
     if (!model || !parameters) {
       return res.status(400).json({ 
         error: 'Missing required fields: model and parameters' 
+      });
+    }
+
+    // Check if this is an image generation model
+    if (!IMAGE_GENERATION_MODELS.includes(model)) {
+      return res.status(400).json({
+        error: `Model ${model} is not an image generation model. Use /generate-text for text models.`
       });
     }
 
@@ -114,6 +152,135 @@ router.post('/generate-image-advanced', async (req: Request<{}, {}, GenerateImag
     });
   }
 });
+
+// New text generation endpoint for Claude
+router.post('/generate-text', async (req: Request<{}, {}, GenerateTextRequest>, res: Response) => {
+  try {
+    const { model, parameters } = req.body;
+
+    // Validate request
+    if (!model || !parameters || !parameters.prompt) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: model and parameters.prompt' 
+      });
+    }
+
+    // Check if this is a text generation model
+    if (!TEXT_GENERATION_MODELS.includes(model)) {
+      return res.status(400).json({
+        error: `Model ${model} is not a text generation model. Use /generate-image-advanced for image models.`
+      });
+    }
+
+    // Get the actual Replicate model version
+    const replicateModel = MODEL_MAPPINGS[model];
+    if (!replicateModel) {
+      return res.status(400).json({ 
+        error: `Unsupported model: ${model}` 
+      });
+    }
+
+    // Transform parameters for Claude
+    const transformedParams = transformParametersForTextModel(model, parameters);
+
+    console.log(`Generating text with model: ${model}`);
+    console.log('Parameters:', transformedParams);
+
+    // Call Replicate API
+    const output = await replicate.run(replicateModel, {
+      input: transformedParams
+    });
+
+    // Handle Claude response - it typically returns a string or array of strings
+    let responseText: unknown = '';
+    
+    if (Array.isArray(output)) {
+      responseText = output.join('');
+    } else if (typeof output === 'string') {
+      responseText = output;
+    } else if (output && typeof output === 'object' && 'text' in output) {
+      responseText = output.text;
+    }
+
+    res.json({
+      success: true,
+      text: responseText,
+      model,
+      parameters: transformedParams
+    });
+
+  } catch (error) {
+    console.error('Text generation error:', error);
+    
+    // Handle specific Replicate errors
+    if (error instanceof Error) {
+      if (error.message.includes('unauthorized')) {
+        return res.status(401).json({ 
+          error: 'Invalid Replicate API token' 
+        });
+      }
+      if (error.message.includes('rate limit')) {
+        return res.status(429).json({ 
+          error: 'Rate limit exceeded. Please try again later.' 
+        });
+      }
+    }
+
+    res.status(500).json({ 
+      error: 'Failed to generate text',
+      details: process.env.NODE_ENV === 'development' ? error : undefined
+    });
+  }
+});
+
+// Transform parameters for text generation models
+function transformParametersForTextModel(model: string, params: any): Record<string, any> {
+  const transformed = { ...params };
+
+  switch (model) {
+    case 'claude-4-sonnet':
+      // Ensure required parameters are set with defaults
+      if (!transformed.max_tokens) {
+        transformed.max_tokens = 8192;
+      }
+      
+      // Validate max_tokens range
+      transformed.max_tokens = Math.max(1024, Math.min(64000, parseInt(transformed.max_tokens)));
+      
+      // Set defaults for optional parameters
+      if (transformed.system_prompt === undefined) {
+        transformed.system_prompt = "";
+      }
+      
+      if (transformed.extended_thinking === undefined) {
+        transformed.extended_thinking = false;
+      }
+      
+      if (transformed.max_image_resolution === undefined) {
+        transformed.max_image_resolution = 0.5;
+      } else {
+        transformed.max_image_resolution = Math.max(0.001, Math.min(2, parseFloat(transformed.max_image_resolution)));
+      }
+      
+      if (transformed.thinking_budget_tokens === undefined) {
+        transformed.thinking_budget_tokens = 1024;
+      } else {
+        transformed.thinking_budget_tokens = Math.max(1024, Math.min(64000, parseInt(transformed.thinking_budget_tokens)));
+      }
+      
+      // Handle image parameter (optional)
+      if (transformed.image && typeof transformed.image !== 'string') {
+        delete transformed.image;
+      }
+      
+      break;
+      
+    default:
+      break;
+  }
+
+  return transformed;
+}
 
 // Transform parameters to match each model's expected input format
 function transformParametersForModel(model: string, params: Record<string, any>): Record<string, any> {
@@ -233,7 +400,6 @@ function transformParametersForModel(model: string, params: Record<string, any>)
       delete transformed.cfg;
       delete transformed.steps;
       break;
-
 
     case 'bytedance-seedream3':
       // ByteDance SeeDream-3 specific transformations
@@ -374,6 +540,72 @@ function transformParametersForModel(model: string, params: Record<string, any>)
       delete transformed.height;
       break;
 
+    case 'luma-photon':
+      // Reference-guided model transformations
+      
+      // Validate aspect ratio
+      if (transformed.aspect_ratio) {
+        const supportedRatios = ["1:1", "3:4", "4:3", "9:16", "16:9", "9:21", "21:9"];
+        if (!supportedRatios.includes(transformed.aspect_ratio)) {
+          transformed.aspect_ratio = "16:9"; // Default
+        }
+      } else {
+        transformed.aspect_ratio = "16:9"; // Default if not provided
+      }
+      
+      // Handle seed
+      if (transformed.seed && transformed.seed !== '') {
+        transformed.seed = parseInt(transformed.seed);
+      } else {
+        delete transformed.seed; // Let it be random if not provided
+      }
+      
+      // Validate and clamp reference weights
+      if (transformed.image_reference_weight !== undefined) {
+        transformed.image_reference_weight = Math.max(0, Math.min(1, parseFloat(transformed.image_reference_weight)));
+      } else {
+        transformed.image_reference_weight = 0.85; // Default
+      }
+      
+      if (transformed.style_reference_weight !== undefined) {
+        transformed.style_reference_weight = Math.max(0, Math.min(1, parseFloat(transformed.style_reference_weight)));
+      } else {
+        transformed.style_reference_weight = 0.85; // Default
+      }
+      
+      // Handle deprecated URL parameters - convert to new format if needed
+      if (transformed.image_reference_url && !transformed.image_reference) {
+        transformed.image_reference = transformed.image_reference_url;
+      }
+      if (transformed.style_reference_url && !transformed.style_reference) {
+        transformed.style_reference = transformed.style_reference_url;
+      }
+      if (transformed.character_reference_url && !transformed.character_reference) {
+        transformed.character_reference = transformed.character_reference_url;
+      }
+      
+      // Remove deprecated parameters
+      delete transformed.image_reference_url;
+      delete transformed.style_reference_url;
+      delete transformed.character_reference_url;
+      
+      // Remove unsupported parameters that might be passed from other models
+      delete transformed.width;
+      delete transformed.height;
+      delete transformed.guidance_scale;
+      delete transformed.cfg;
+      delete transformed.num_inference_steps;
+      delete transformed.steps;
+      delete transformed.negative_prompt;
+      delete transformed.chaos;
+      delete transformed.output_quality;
+      delete transformed.num_outputs;
+      delete transformed.output_format;
+      delete transformed.safety_filter_level;
+      delete transformed.size;
+      delete transformed.style;
+      break;
+
     default:
       break;
   }
@@ -381,7 +613,13 @@ function transformParametersForModel(model: string, params: Record<string, any>)
   return transformed;
 }
 
-export default router;
+// Get available models endpoint
+router.get('/models', (req: Request, res: Response) => {
+  res.json({
+    image_models: IMAGE_GENERATION_MODELS,
+    text_models: TEXT_GENERATION_MODELS,
+    all_models: Object.keys(MODEL_MAPPINGS)
+  });
+});
 
-// If you're using this in your main app file instead of as a separate route:
-// app.use(router);
+export default router;
