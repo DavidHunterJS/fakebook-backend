@@ -30,7 +30,7 @@ interface GenerateTextRequest {
 // Model mappings to actual Replicate model versions
 const MODEL_MAPPINGS: Record<string, `${string}/${string}` | `${string}/${string}:${string}`> = {
   'stable-diffusion-xl': 'stability-ai/stable-diffusion-3.5-large',
-  'stable-diffusion-inpainting': 'stability-ai/stable-diffusion-inpainting:d41f129b6a22c5e5055b8b644141d63608ce1e8e2c388657697410c5885239e2',
+  'stable-diffusion-inpainting': 'black-forest-labs/flux-fill-dev',
   'midjourney-style': 'prompthero/openjourney:9936c2001faa2194a261c01381f90e65261879985476014a0a37a334593a05eb',
   'flux-schnell': 'black-forest-labs/flux-schnell',
   'google-imagen4': 'google/imagen-4',
@@ -259,24 +259,61 @@ function transformParametersForModel(model: string, params: Record<string, any>)
   const transformed = { ...params };
 
   switch (model) {
-    case 'stable-diffusion-inpainting':
-      // Ensure required string fields are present
-      if (!transformed.image || !transformed.mask) {
-        throw new Error('Image and Mask URLs are required for inpainting.');
+  case 'stable-diffusion-inpainting':
+      // Ensure required fields are present
+      if (!transformed.prompt || !transformed.image) {
+        throw new Error('Prompt and Image URL are required for inpainting.');
       }
-      if (transformed.width) transformed.width = parseInt(transformed.width, 10);
-      if (transformed.height) transformed.height = parseInt(transformed.height, 10);
-      if (transformed.num_outputs) transformed.num_outputs = parseInt(transformed.num_outputs, 10);
-      if (transformed.num_inference_steps) transformed.num_inference_steps = parseInt(transformed.num_inference_steps, 10);
-      if (transformed.guidance_scale) transformed.guidance_scale = parseFloat(transformed.guidance_scale);
+
+      // Convert string numbers to proper types
+      if (transformed.num_outputs) {
+        transformed.num_outputs = Math.max(1, Math.min(4, parseInt(transformed.num_outputs, 10)));
+      }
       
+      if (transformed.num_inference_steps) {
+        transformed.num_inference_steps = Math.max(1, Math.min(50, parseInt(transformed.num_inference_steps, 10)));
+      }
+      
+      if (transformed.guidance) {
+        transformed.guidance = Math.max(0, Math.min(100, parseFloat(transformed.guidance)));
+      }
+      
+      if (transformed.output_quality) {
+        transformed.output_quality = Math.max(0, Math.min(100, parseInt(transformed.output_quality, 10)));
+      }
+      
+      if (transformed.lora_scale) {
+        transformed.lora_scale = Math.max(-1, Math.min(3, parseFloat(transformed.lora_scale)));
+      }
+
+      // Handle seed
       if (transformed.seed && transformed.seed !== '') {
         transformed.seed = parseInt(transformed.seed, 10);
       } else {
         delete transformed.seed;
       }
-      break;
 
+      // Handle optional LoRA weights
+      if (!transformed.lora_weights || transformed.lora_weights.trim() === '') {
+        delete transformed.lora_weights;
+        delete transformed.lora_scale; // Remove lora_scale if no weights specified
+      }
+
+      // Handle boolean values
+      if (transformed.disable_safety_checker === 'true' || transformed.disable_safety_checker === true) {
+        transformed.disable_safety_checker = true;
+      } else {
+        transformed.disable_safety_checker = false;
+      }
+
+      // Remove any undefined or empty values
+      Object.keys(transformed).forEach(key => {
+        if (transformed[key] === undefined || transformed[key] === '') {
+          delete transformed[key];
+        }
+      });
+
+      break;
     case 'stable-diffusion-xl':
       if (transformed.guidance_scale) {
         transformed.cfg = parseFloat(transformed.guidance_scale);

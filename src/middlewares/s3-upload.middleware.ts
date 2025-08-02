@@ -28,19 +28,19 @@ const generateFilename = (originalname: string): string => {
   return `${timestamp}-${randomString}${extension}`;
 };
 
-// --- 4. Custom S3 Upload Function ---
-const uploadToS3 = async (file: Express.Multer.File, folderPath: string): Promise<string> => {
+// --- ✅ 4. DEFINE A REUSABLE TYPE ---
+// This interface defines only the properties our upload function needs.
+interface UploadableFile {
+  buffer?: Buffer;
+  mimetype?: string;
+  originalname: string;
+}
+
+// --- ✅ 5. UPDATE THE FUNCTION SIGNATURE & REMOVE UNUSED CONSOLE LOGS ---
+// The function now accepts any object that matches the UploadableFile interface.
+const uploadToS3 = async (file: UploadableFile, folderPath: string): Promise<string> => {
   const filename = generateFilename(file.originalname);
   const key = `${folderPath}/${filename}`;
-  
-  console.log(`Uploading to S3: ${file.originalname} → ${key}`);
-  console.log('File details:', {
-    originalname: file.originalname,
-    mimetype: file.mimetype,
-    size: file.size,
-    bufferExists: !!file.buffer,
-    bufferLength: file.buffer?.length
-  });
   
   if (!file.buffer) {
     throw new Error('File buffer is missing');
@@ -55,12 +55,12 @@ const uploadToS3 = async (file: Express.Multer.File, folderPath: string): Promis
     Key: key,
     Body: file.buffer,
     ContentType: file.mimetype || 'application/octet-stream',
-    ACL: 'public-read', // Remove this line if it's causing issues
+    ACL: 'public-read',
   });
 
   try {
-    const result = await s3Client.send(command);
-    console.log('S3 upload successful:', result);
+    await s3Client.send(command);
+    console.log(`S3 upload successful: ${key}`);
     return key;
   } catch (error) {
     console.error('S3 upload failed:', error);
@@ -68,70 +68,56 @@ const uploadToS3 = async (file: Express.Multer.File, folderPath: string): Promis
   }
 };
 
-// --- 5. Multer Setup with Memory Storage ---
+// --- 6. Multer Setup with Memory Storage ---
 const memoryUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB file size limit
 });
 
-// --- 6. Middleware Functions ---
+// --- 7. Middleware Functions ---
 const profilePictureUpload = async (req: Request, res: Response, next: NextFunction) => {
-  // First run multer to get the file
-  memoryUpload.single('profilePicture')(req, res, async (err: Error) => {
+  memoryUpload.single('profilePicture')(req, res, async (err: any) => {
     if (err) {
-      console.error("Multer error:", err);
       const message = err instanceof multer.MulterError ? err.message : "Internal server error during file upload.";
-      const status = err instanceof multer.MulterError ? 400 : 500;
-      return res.status(status).json({ message });
+      return res.status(400).json({ message });
     }
     
-    // Then upload to S3
     try {
-      const file = req.file;
-      if (file) {
-        const key = await uploadToS3(file, 'profile');
+      if (req.file) {
+        const key = await uploadToS3(req.file, 'profile');
         (req as any).s3Key = key;
-        (req as any).s3Url = `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
       }
       next();
     } catch (error) {
-      console.error("S3 upload error:", error);
       return res.status(500).json({ message: "Failed to upload file to S3" });
     }
   });
 };
 
 const coverPhotoUpload = async (req: Request, res: Response, next: NextFunction) => {
-  memoryUpload.single('coverPhoto')(req, res, async (err: Error) => {
+  memoryUpload.single('coverPhoto')(req, res, async (err: any) => {
     if (err) {
-      console.error("Multer error:", err);
       const message = err instanceof multer.MulterError ? err.message : "Internal server error during file upload.";
-      const status = err instanceof multer.MulterError ? 400 : 500;
-      return res.status(status).json({ message });
+      return res.status(400).json({ message });
     }
     
     try {
-      const file = req.file;
-      if (file) {
-        const key = await uploadToS3(file, 'covers');
+      if (req.file) {
+        const key = await uploadToS3(req.file, 'covers');
         (req as any).s3Key = key;
-        (req as any).s3Url = `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
       }
       next();
     } catch (error) {
-      console.error("S3 upload error:", error);
       return res.status(500).json({ message: "Failed to upload file to S3" });
     }
   });
 };
 
 const postMediaUpload = async (req: Request, res: Response, next: NextFunction) => {
-  memoryUpload.array('files', 10)(req, res, async (err: Error) => {
+  memoryUpload.array('files', 10)(req, res, async (err: any) => {
     if (err) {
-      console.error("Multer error:", err);
       const message = err instanceof multer.MulterError ? err.message : "Internal server error during file upload.";
-      const status = err instanceof multer.MulterError ? 400 : 500;
-      return res.status(status).json({ message });
+      return res.status(400).json({ message });
     }
     
     try {
@@ -140,29 +126,23 @@ const postMediaUpload = async (req: Request, res: Response, next: NextFunction) 
         const uploadPromises = files.map(file => uploadToS3(file, 'posts'));
         const keys = await Promise.all(uploadPromises);
         (req as any).s3Keys = keys;
-        (req as any).s3Urls = keys.map(key => `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`);
       }
       next();
     } catch (error) {
-      console.error("S3 upload error:", error);
       return res.status(500).json({ message: "Failed to upload files to S3" });
     }
   });
 };
-export const getFileUrl = (key: string | undefined): string | null => {
-  if (!key) {
-    return null;
-  }
-  // This logic handles both S3 and a potential local setup
-  if (!bucketName) {
-    const localBaseUrl = process.env.API_URL || 'http://localhost:5000';
-    return `${localBaseUrl}/uploads/${key}`; // Adjust if your local static path is different
-  }
 
-  // For S3, construct the full URL
-  return `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
-};
-// --- 7. Delete Function ---
+  export const getFileUrl = (key: string | undefined): string | null => {
+    if (!key || !process.env.S3_BUCKET_NAME || !process.env.AWS_REGION) {
+      return null;
+    }
+    // This constructs the correct path-style URL
+    return `https://s3.${process.env.AWS_REGION}.amazonaws.com/${process.env.S3_BUCKET_NAME}/${key}`;
+  };
+
+// --- 8. Delete Function ---
 const deleteFile = async (key: string): Promise<boolean> => {
   if (!key) return false;
   try {
@@ -175,13 +155,14 @@ const deleteFile = async (key: string): Promise<boolean> => {
   }
 };
 
-// --- 8. Exported Middleware ---
+// --- ✅ 9. UPDATED Exported Middleware ---
 const s3UploadMiddleware = {
   profilePicture: profilePictureUpload,
   coverPhoto: coverPhotoUpload,
   postMedia: postMediaUpload,
   deleteFile: deleteFile,
   getFileUrl: getFileUrl,
+  uploadToS3: uploadToS3, // The function is now correctly exported
 };
 
 export default s3UploadMiddleware;
