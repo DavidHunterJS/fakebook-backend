@@ -19,6 +19,8 @@ import adminRoutes from './routes/admin.routes';
 import generationRoutes from './routes/generation.routes';
 import rewriteRoutes from './routes/rewrite.routes';
 import imagegenRouter from './routes/genimgage.routes';
+import uploadRoutes from './routes/upload.routes'
+import followRoutes from './routes/follow.routes';
 
 // Load env vars
 dotenv.config();
@@ -74,6 +76,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api', generationRoutes);
 app.use('/api', rewriteRoutes);
 app.use('/api', imagegenRouter );
+app.use('/api/upload', uploadRoutes);
+app.use('/api/follows', followRoutes);
 
 // Catch-all route handler (must be placed after all other routes)
 app.use('*', (req: Request, res: Response) => {

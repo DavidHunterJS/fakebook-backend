@@ -82,6 +82,34 @@ router.get(
 );
 
 /**
+ * @route   GET api/users/:id/friends
+ * @desc    Get a specific user's friends list by their ID
+ * @access  Private
+ */
+router.get(
+  '/:id/friends',
+  [
+    param('id')
+      .isMongoId()
+      .withMessage('Invalid user ID')
+  ],
+  userController.getUserFriends // Note: We will create this controller function next
+);
+
+/**
+ * @route   GET api/users/:id/albums
+ * @desc    Get a specific user's photo albums by their ID
+ * @access  Private
+ */
+router.get(
+  '/:id/albums',
+  [
+    param('id').isMongoId().withMessage('Invalid user ID')
+  ],
+  userController.getUserAlbums
+);
+
+/**
  * @route   PUT api/users/profile
  * @desc    Update user profile
  * @access  Private

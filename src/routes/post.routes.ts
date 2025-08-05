@@ -34,7 +34,7 @@ const REACTION_TYPES = {
   THUMBS_DOWN: 'thumbs_down'
 } as const;
 
-// --- All other routes remain the same ---
+// --- Main Post Routes ---
 router.post(
   '/',
   [
@@ -62,6 +62,31 @@ router.get(
   postController.getFeedPosts
 );
 
+// --- Saved Post Routes ---
+// NOTE: This route is placed before '/:id' to ensure 'saved' is not treated as a post ID.
+router.get(
+  '/saved',
+  [
+    query('page').optional().isInt({ min: 1 }),
+    query('limit').optional().isInt({ min: 1, max: 50 }),
+  ],
+  postController.getSavedPosts
+);
+
+router.post(
+  '/:id/save',
+  [param('id').isMongoId().withMessage('Invalid post ID')],
+  postController.savePost
+);
+
+router.delete(
+  '/:id/save',
+  [param('id').isMongoId().withMessage('Invalid post ID')],
+  postController.unsavePost
+);
+
+
+// --- Other Post-Specific Routes ---
 router.get(
   '/user/:userId',
   [
@@ -87,7 +112,7 @@ router.put<PostIdParam>(
 
 router.delete('/:id', [param('id').isMongoId()], postController.deletePost);
 
-// --- Original reaction routes restored ---
+// --- Reaction Routes ---
 
 router.get(
   '/:id/reactions',
@@ -121,7 +146,7 @@ router.delete(
 );
 
 
-// --- UNCHANGED COMMENT AND OTHER ROUTES ---
+// --- Comment and Other Routes ---
 router.get(
   '/:id/likes',
   [

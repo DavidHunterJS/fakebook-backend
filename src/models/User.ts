@@ -3,11 +3,13 @@ import mongoose, { Schema, Model } from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { IUser } from '../types/user.types';
 import { Role, Permission } from '../config/roles';
+
 export interface UserReport {
   user: string | IUser;
   reason: string;
   date: Date;
 }
+
 export interface PrivacySettings {
   profileVisibility: 'public' | 'friends' | 'private';
   friendsVisibility: 'public' | 'friends' | 'private';
@@ -26,16 +28,29 @@ const UserSchema = new Schema<IUser>(
     bio: { type: String, default: '' },
     location: { type: String, default: '' },
     birthday: { type: Date },
-    role: { 
-      type: String, 
-      enum: Object.values(Role), 
-      default: Role.USER 
+    role: {
+      type: String,
+      enum: Object.values(Role),
+      default: Role.USER
     },
     isActive: { type: Boolean, default: true },
     friends: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     friendRequests: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     sentRequests: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     blockedUsers: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    
+    // Follow system counts
+    followingCount: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    followersCount: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    
     lastActive: { type: Date, default: Date.now },
     isOnline: { type: Boolean, default: false },
     privacySettings: {
@@ -60,10 +75,15 @@ const UserSchema = new Schema<IUser>(
   { timestamps: true }
 );
 
+// Indexes for better performance
+UserSchema.index({ username: 1 });
+UserSchema.index({ email: 1 });
+UserSchema.index({ followersCount: -1 }); // For sorting by popularity
+UserSchema.index({ followingCount: -1 });
+
 // Pre-save middleware to hash password
 UserSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
-  
   try {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
@@ -79,5 +99,4 @@ UserSchema.methods.comparePassword = async function(candidatePassword: string): 
 };
 
 const User: Model<IUser> = mongoose.model<IUser>('User', UserSchema);
-
 export default User;
