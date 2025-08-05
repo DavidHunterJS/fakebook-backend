@@ -39,6 +39,8 @@ export interface IUserBase {
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
   isEmailVerified: boolean;
+  followingCount: number;
+  followersCount: number;
 }
 
 export interface IUser extends IUserBase, Document {
