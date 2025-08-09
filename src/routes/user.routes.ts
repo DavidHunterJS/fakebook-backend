@@ -7,11 +7,65 @@ import * as userController from '../controllers/user.controller';
 import authMiddleware from '../middlewares/auth.middleware';
 import { isAdmin } from '../middlewares/role.middleware';
 import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
+import User from '../models/User';
 
 const router: Router = express.Router();
 
 // Apply auth middleware to all routes
 router.use(authMiddleware);
+
+
+
+router.post('/by-ids', authMiddleware, async (req, res) => {
+  try {
+    const { userIds } = req.body;
+    
+    if (!userIds || !Array.isArray(userIds)) {
+      return res.status(400).json({ message: 'userIds array is required' });
+    }
+    
+    const users = await User.find({
+      _id: { $in: userIds },
+      isActive: true
+    }).select('firstName lastName username profilePicture isOnline');
+    
+    res.json({ users });
+  } catch (error) {
+    console.error('Error fetching users by IDs:', error);
+    res.status(500).json({ message: 'Failed to fetch users' });
+  }
+});
+
+// Search users by name/username
+router.get('/search', authMiddleware, async (req, res) => {
+  try {
+    const { q } = req.query;
+    
+    if (!q || typeof q !== 'string') {
+      return res.status(400).json({ message: 'Search query is required' });
+    }
+    
+    const users = await User.find({
+      $and: [
+        {
+          $or: [
+            { firstName: { $regex: q, $options: 'i' } },
+            { lastName: { $regex: q, $options: 'i' } },
+            { username: { $regex: q, $options: 'i' } }
+          ]
+        },
+        { isActive: true },
+        { _id: { $ne: req.user.id } } // Exclude current user
+      ]
+    }).select('firstName lastName username profilePicture isOnline').limit(20);
+    
+    res.json({ users });
+  } catch (error) {
+    console.error('Error searching users:', error);
+    res.status(500).json({ message: 'Search failed' });
+  }
+});
+
 
 /**
  * @route   GET api/users
