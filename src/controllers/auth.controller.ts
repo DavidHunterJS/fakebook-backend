@@ -188,20 +188,21 @@ export const login = async (req: Request, res: Response): Promise<Response> => {
  */
 export const getMe = async (req: Request, res: Response): Promise<Response> => {
   try {
-    // User is already attached to req by auth middleware
     if (!req.user) {
-      return res.status(401).json({ message: 'Not authorized' });
+      return res.status(401).json({ success: false, message: 'Not authorized' });
     }
     
     const user = await User.findById(req.user.id).select('-password');
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
     
-    return res.json(user);
+    // ✅ WRAP THE RESPONSE HERE
+    return res.json({ success: true, user: user });
+
   } catch (err) {
     console.error((err as Error).message);
-    return res.status(500).send('Server error');
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 

@@ -1,327 +1,444 @@
-// src/routes/conversation.routes.ts
+// routes/conversation.routes.ts
 import express, { Request, Response } from 'express';
-import Conversation from '../models/Conversation';
-import Message from '../models/Message';
-import User from '../models/User';
-import authMiddleware  from '../middlewares/auth.middleware';
-import { IUser } from '../types/user.types';
-import mongoose from 'mongoose'; // Make sure this is imported
-
-interface AuthenticatedRequest extends Request {
-  user?: IUser;
-}
+import { Conversation, IConversation } from '../models/Conversation';
+import { Message } from '../models/Message';
+import { Types } from 'mongoose';
+import  auth  from '../middlewares/auth.middleware';
 
 const router = express.Router();
 
-// Get all conversations for the authenticated user
-router.get('/', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// GET /api/conversations - Get user's conversations
+router.get('/', auth, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
+    const userId = new Types.ObjectId(req.user.id);
     
-    // Use simple find + populate approach instead of complex aggregation
-    const conversations = await Conversation.find({
-      'participants.userId': userId
-    })
-    .populate('participants.userId', 'username firstName lastName profilePicture isOnline')
-    .sort({ lastActivity: -1 })
-    .limit(50);
-    
-    console.log('🔍 Conversations details:', conversations.map(c => ({
-      id: c._id,
-      type: c.type,
-      participantCount: c.participants?.length
-    })));
+    const filter = {
+      participants: {
+      $elemMatch: {
+      userId: userId,
+      isActive: true
+      }
+      },
+        lastMessage: { $exists: true },
+        'settings.isArchived': false
+      };
 
-    res.json({ conversations });
+      // Log the exact filter being sent to the database
+      console.log('--- EXECUTING CONVERSATION LIST QUERY ---', JSON.stringify(filter, null, 2));
+
+    const conversations = await Conversation.find({
+      participants: {
+        $elemMatch: {
+          userId: userId,
+          isActive: true
+        }
+      },
+      lastMessage: { $exists: true },
+      'settings.isArchived': false
+    })
+    .populate({
+      path: 'participants.userId',
+      select: 'username firstName lastName profilePicture isOnline'
+    })
+    .populate('lastMessage.senderId', 'username firstName lastName profilePicture')
+    .sort({ updatedAt: -1 })
+    .lean();
+
+    // Add unread count for this user
+    const conversationsWithUnread = conversations.map(conv => {
+      const unreadData = conv.unreadCount?.find(u => 
+        u.userId.toString() === userId.toString()
+      );
+      return {
+        ...conv,
+        unreadCount: unreadData?.count || 0
+      };
+    });
+
+    res.json({
+      success: true,
+      conversations: conversationsWithUnread
+    });
+
   } catch (error) {
-    console.error('Error fetching conversations:', error);
-    res.status(500).json({ message: 'Failed to fetch conversations' });
+    console.error('Get conversations error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch conversations'
+    });
   }
 });
 
-// Create a new conversation
-router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// GET /api/conversations/:id - Get specific conversation
+router.get('/:id', auth, async (req: Request, res: Response) => {
   try {
-    
-    const userId = req.user?.id;
-    const { participantIds, type, name, settings } = req.body;
-    
+    const userId = new Types.ObjectId(req.user.id);
+    const conversationId = new Types.ObjectId(req.params.id);
 
-    // Validation
-    if (!participantIds || !Array.isArray(participantIds) || participantIds.length === 0) {
-      return res.status(400).json({ message: 'Participant IDs are required' });
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      participants: {
+        $elemMatch: {
+          userId: userId,
+          isActive: true
+        }
+      }
+    })
+    .populate('participants.userId', 'name email avatar')
+    .populate('createdBy', 'name avatar');
+
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found'
+      });
     }
 
-    if (type === 'group' && !name) {
-      return res.status(400).json({ message: 'Group conversations require a name' });
+    res.json({
+      success: true,
+      conversation
+    });
+
+  } catch (error) {
+    console.error('Get conversation error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch conversation'
+    });
+  }
+});
+
+// POST /api/conversations - Create new conversation
+
+router.post('/', auth, async (req: Request, res: Response) => {
+  console.log('--- CREATE CONVERSATION: RUNNING LATEST BACKEND CODE ---');
+  try {
+    const userId = new Types.ObjectId(req.user.id);
+    const { type, participants, title } = req.body;
+
+    // --- Validation ---
+    if (!type || !participants || participants.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Type and participants are required'
+      });
+    }
+    if (type === 'direct' && participants.length !== 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Direct conversations must have exactly 2 participants'
+      });
     }
 
-    // For direct messages, ensure only 2 participants
-    if (type === 'direct' && participantIds.length !== 1) {
-      return res.status(400).json({ message: 'Direct conversations must have exactly 2 participants' });
-    }
-
-    // Check if direct conversation already exists
-    // Check if direct conversation already exists
+    // --- Handle existing direct conversations ---
     if (type === 'direct') {
+      const participantIds = [userId, new Types.ObjectId(participants[0])];
+      
+      // Find the conversation without populating first
       const existingConversation = await Conversation.findOne({
         type: 'direct',
-        $and: [
-          { 'participants.userId': userId },
-          { 'participants.userId': participantIds[0] }
-        ]
+        'participants.userId': { $all: participantIds }
       });
 
       if (existingConversation) {
-        // Populate the existing conversation before returning
-        const populatedExisting = await Conversation.findById(existingConversation._id)
-          .populate('participants.userId', 'username firstName lastName profilePicture isOnline');
-          
-        return res.status(200).json({
-          message: 'Direct conversation already exists',
-          conversation: populatedExisting
+        // ✅ THIS IS THE FINAL FIX: Use a single, atomic update operation
+
+        const updateOps: any = {
+          $set: {
+            // Set all participants in the array to be active
+            "participants.$[].isActive": true,
+            "settings.isArchived": false
+          },
+          $unset: {
+            // Remove the 'leftAt' field from all participants
+            "participants.$[].leftAt": "" 
+          }
+        };
+        
+        // If the unreadCount field is missing on the old document, create it
+        if (!existingConversation.unreadCount || existingConversation.unreadCount.length === 0) {
+          const initialUnreadCount = existingConversation.participants.map(p => ({
+            userId: p.userId,
+            count: 0
+          }));
+          updateOps.$set.unreadCount = initialUnreadCount;
+        }
+        
+        // Find the conversation by ID and apply all updates at once
+        const updatedConversation = await Conversation.findByIdAndUpdate(
+          existingConversation._id,
+          updateOps,
+          { new: true } // This option tells MongoDB to return the updated document
+        ).populate({
+            path: 'participants.userId',
+            select: 'username firstName lastName profilePicture isOnline'
+        }).lean();
+
+        if (!updatedConversation) {
+          return res.status(404).json({ success: false, message: 'Existing conversation not found' });
+        }
+
+        const unreadData = updatedConversation.unreadCount?.find(u => u.userId.toString() === userId.toString());
+        const finalConversation = {
+          ...updatedConversation,
+          unreadCount: unreadData?.count || 0
+        };
+        
+        console.log('--- LOG B: DOCUMENT AFTER PATCH ---', JSON.stringify(finalConversation, null, 2));
+        
+        return res.json({
+          success: true,
+          conversation: finalConversation,
+          isExisting: true
         });
       }
     }
 
-    // Convert string IDs to ObjectIds and verify all participants exist
-    const allParticipantIds = [userId, ...participantIds];
-    
-    // Convert all IDs to ObjectId instances for consistent comparison
-    const objectIds = allParticipantIds.map(id => {
-      try {
-        return new mongoose.Types.ObjectId(id);
-      } catch (error) {
-        throw new Error(`Invalid user ID format: ${id}`);
+    // --- Create a new conversation ---
+    const conversationParticipants = [
+      { userId, role: 'admin', joinedAt: new Date(), isActive: true },
+      ...participants.map((pId: string) => ({ userId: new Types.ObjectId(pId), role: 'member', joinedAt: new Date(), isActive: true }))
+    ];
+
+    const newConversation = new Conversation({
+      type,
+      participants: conversationParticipants,
+      title: type === 'group' ? title : undefined,
+      unreadCount: conversationParticipants.map(p => ({ userId: p.userId, count: 0 })),
+      createdBy: userId,
+      settings: {
+        allowFileSharing: true,
+        allowImageSharing: true,
+        isArchived: false
       }
     });
-    
-    console.log('🔍 Looking for users with ObjectIds:', objectIds.map(id => id.toString()));
-    
-    const users = await User.find({ _id: { $in: objectIds } });
-    
-    
-    if (users.length !== objectIds.length) {
-      
-      // Find which users are missing for better error reporting
-      const foundIds = users.map(u => u._id.toString());
-      const expectedIds = objectIds.map(id => id.toString());
-      const missingIds = expectedIds.filter(id => !foundIds.includes(id));
-      
-      
-      return res.status(400).json({ 
-        message: 'One or more participants not found',
-        missingIds 
-      });
+
+    await newConversation.save();
+
+    const populatedConversation = await Conversation.findById(newConversation._id)
+      .populate({
+        path: 'participants.userId',
+        select: 'username firstName lastName profilePicture isOnline'
+      })
+      .lean();
+
+    if (!populatedConversation) {
+      return res.status(500).json({ success: false, message: "Failed to process created conversation." });
     }
+
+    // Ensure the unreadCount is a number
+    const unreadData = populatedConversation.unreadCount?.find(u => u.userId.toString() === userId.toString());
+    const finalConversation = {
+      ...populatedConversation,
+      unreadCount: unreadData?.count || 0
+    };
+
+    console.log('--- LOG A: DOCUMENT AFTER CREATION ---', JSON.stringify(finalConversation, null, 2));
     
-    
-    // Create participants array - creator is admin for groups
-    const participants = objectIds.map(id => ({
-      userId: id,
-      role: (type === 'group' && id.toString() === userId) ? 'admin' : 'member',
-      joinedAt: new Date(),
-      permissions: (type === 'group' && id.toString() === userId) ? {
-        canDeleteMessages: true,
-        canKickUsers: true,
-        canChangeSettings: true,
-        canAddMembers: true
-      } : undefined
-    }));
-
-    const conversation = await Conversation.create({
-      participants,
-      type,
-      name,
-      settings: settings || {},
-      lastActivity: new Date()
-    });
-
-    // Populate participant details
-    const populatedConversation = await Conversation.findById(conversation._id)
-      .populate('participants.userId', 'username firstName lastName profilePicture isOnline');
-
-    res.status(201).json({ 
-      message: 'Conversation created successfully', 
-      conversation: populatedConversation 
+    // Send the corrected `finalConversation` object
+    return res.status(201).json({
+      success: true,
+      conversation: finalConversation
     });
 
   } catch (error) {
-    console.error('Error creating conversation:', error);
-    res.status(500).json({ 
-      message: 'Failed to create conversation',
-      error: error instanceof Error ? error.message : 'Unknown error'
+    console.error('Create conversation error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create conversation'
     });
   }
 });
 
-// Get conversation details
-router.get('/:conversationId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// PUT /api/conversations/:id - Update conversation
+router.put('/:id', auth, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
-    const { conversationId } = req.params;
+    const userId = new Types.ObjectId(req.user.id);
+    const conversationId = new Types.ObjectId(req.params.id);
+    const { title, description, settings, encryptionSettings } = req.body;
 
+    // Check if user is admin of this conversation
     const conversation = await Conversation.findOne({
       _id: conversationId,
-      'participants.userId': userId
-    }).populate('participants.userId', 'username firstName lastName profilePicture isOnline');
+      'participants': {
+        $elemMatch: {
+          userId,
+          role: 'admin',
+          isActive: true
+        }
+      }
+    });
 
     if (!conversation) {
-      return res.status(404).json({ message: 'Conversation not found' });
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this conversation'
+      });
     }
 
-    res.json({ conversation });
+    // Update allowed fields
+    const updateData: any = {};
+    if (title !== undefined) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (settings) updateData.settings = { ...conversation.settings, ...settings };
+    if (encryptionSettings) {
+      updateData.encryptionSettings = { 
+        ...conversation.encryptionSettings, 
+        ...encryptionSettings 
+      };
+    }
+
+    const updatedConversation = await Conversation.findByIdAndUpdate(
+      conversationId,
+      updateData,
+      { new: true }
+    )
+    .populate('participants.userId', 'name email avatar')
+    .populate('createdBy', 'name avatar');
+
+    res.json({
+      success: true,
+      conversation: updatedConversation
+    });
+
   } catch (error) {
-    console.error('Error fetching conversation:', error);
-    res.status(500).json({ message: 'Failed to fetch conversation' });
+    console.error('Update conversation error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update conversation'
+    });
   }
 });
 
-// Add participants to group conversation
-router.post('/:conversationId/participants', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// DELETE /api/conversations/:id - Archive conversation
+router.delete('/:id', auth, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
-    const { conversationId } = req.params;
-    const { participantIds } = req.body;
+    const userId = new Types.ObjectId(req.user.id);
+    const conversationId = new Types.ObjectId(req.params.id);
 
-    if (!participantIds || !Array.isArray(participantIds)) {
-      return res.status(400).json({ message: 'Participant IDs are required' });
-    }
+    // Check if user is participant
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      'participants.userId': userId,
+      'participants.isActive': true
+    });
 
-    // Check if user has permission to add members
-    const conversation = await Conversation.findById(conversationId);
     if (!conversation) {
-      return res.status(404).json({ message: 'Conversation not found' });
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found'
+      });
     }
 
-    if (conversation.type !== 'group') {
-      return res.status(400).json({ message: 'Can only add participants to group conversations' });
+    // For direct messages, mark as archived for this user
+    // For group chats, remove user from participants
+    if (conversation.type === 'direct') {
+      await Conversation.findOneAndUpdate(
+        { 
+          _id: conversationId,
+          'participants.userId': userId 
+        },
+        { 
+          $set: { 'participants.$.leftAt': new Date() }
+        }
+      );
+    } else {
+      await Conversation.findOneAndUpdate(
+        { 
+          _id: conversationId,
+          'participants.userId': userId 
+        },
+        { 
+          $set: { 
+            'participants.$.isActive': false,
+            'participants.$.leftAt': new Date()
+          }
+        }
+      );
     }
 
-    const userParticipant = conversation.participants.find(p => p.userId.toString() === userId);
-    if (!userParticipant) {
-      return res.status(403).json({ message: 'You are not a participant in this conversation' });
+    res.json({
+      success: true,
+      message: 'Left conversation successfully'
+    });
+
+  } catch (error) {
+    console.error('Delete conversation error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to leave conversation'
+    });
+  }
+});
+
+// POST /api/conversations/:id/participants - Add participants
+router.post('/:id/participants', auth, async (req: Request, res: Response) => {
+  try {
+    const userId = new Types.ObjectId(req.user.id);
+    const conversationId = new Types.ObjectId(req.params.id);
+    const { participants } = req.body;
+
+    if (!participants || participants.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Participants are required'
+      });
     }
 
-    const canAddMembers = userParticipant.role === 'admin' && 
-      (userParticipant.permissions?.canAddMembers !== false);
+    // Check if user is admin
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      type: 'group', // Only group chats allow adding participants
+      'participants': {
+        $elemMatch: {
+          userId,
+          role: 'admin',
+          isActive: true
+        }
+      }
+    });
 
-    if (!canAddMembers) {
-      return res.status(403).json({ message: 'You do not have permission to add members' });
-    }
-
-    // Verify new participants exist and aren't already in conversation
-    const existingParticipantIds = conversation.participants.map(p => p.userId.toString());
-    const newParticipantIds = participantIds.filter(id => !existingParticipantIds.includes(id));
-
-    if (newParticipantIds.length === 0) {
-      return res.status(400).json({ message: 'All users are already participants' });
-    }
-
-    // Convert to ObjectIds and verify users exist
-    const objectIds = newParticipantIds.map(id => new mongoose.Types.ObjectId(id));
-    const users = await User.find({ _id: { $in: objectIds } });
-    
-    if (users.length !== newParticipantIds.length) {
-      return res.status(400).json({ message: 'One or more users not found' });
+    if (!conversation) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to add participants'
+      });
     }
 
     // Add new participants
-    const newParticipants = objectIds.map(id => ({
-      userId: id,
-      role: 'member' as const,
-      joinedAt: new Date()
+    const newParticipants = participants.map((participantId: string) => ({
+      userId: new Types.ObjectId(participantId),
+      role: 'member',
+      joinedAt: new Date(),
+      isActive: true
     }));
 
-    await Conversation.updateOne(
-      { _id: conversationId },
-      { 
-        $push: { participants: { $each: newParticipants } },
-        $set: { lastActivity: new Date() }
-      }
-    );
-
-    res.json({ message: 'Participants added successfully' });
-
-  } catch (error) {
-    console.error('Error adding participants:', error);
-    res.status(500).json({ message: 'Failed to add participants' });
-  }
-});
-
-// Leave conversation
-router.delete('/:conversationId/leave', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.id;
-    const { conversationId } = req.params;
-
-    const conversation = await Conversation.findById(conversationId);
-    if (!conversation) {
-      return res.status(404).json({ message: 'Conversation not found' });
-    }
-
-    // Remove user from participants
-    await Conversation.updateOne(
-      { _id: conversationId },
-      { 
-        $pull: { participants: { userId } },
-        $set: { lastActivity: new Date() }
-      }
-    );
-
-    // If no participants left, delete conversation
-    const updatedConversation = await Conversation.findById(conversationId);
-    if (updatedConversation && updatedConversation.participants.length === 0) {
-      await Conversation.deleteOne({ _id: conversationId });
-      await Message.deleteMany({ conversationId });
-    }
-
-    res.json({ message: 'Left conversation successfully' });
-
-  } catch (error) {
-    console.error('Error leaving conversation:', error);
-    res.status(500).json({ message: 'Failed to leave conversation' });
-  }
-});
-
-// Update conversation settings (admin only)
-router.patch('/:conversationId/settings', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.id;
-    const { conversationId } = req.params;
-    const { settings } = req.body;
-
-    const conversation = await Conversation.findById(conversationId);
-    if (!conversation) {
-      return res.status(404).json({ message: 'Conversation not found' });
-    }
-
-    // Check admin permissions
-    const userParticipant = conversation.participants.find(p => p.userId.toString() === userId);
-    if (!userParticipant || userParticipant.role !== 'admin') {
-      return res.status(403).json({ message: 'Admin privileges required' });
-    }
-
-    const canChangeSettings = userParticipant.permissions?.canChangeSettings !== false;
-    if (!canChangeSettings) {
-      return res.status(403).json({ message: 'You do not have permission to change settings' });
-    }
-
-    await Conversation.updateOne(
-      { _id: conversationId },
-      { 
-        $set: { 
-          settings: { ...conversation.settings, ...settings },
-          lastActivity: new Date()
+    await Conversation.findByIdAndUpdate(conversationId, {
+      $push: { 
+        participants: { $each: newParticipants },
+        unreadCount: { 
+          $each: newParticipants.map((p: { userId: Types.ObjectId }) => ({
+            userId: p.userId,
+            count: 0
+          }))
         }
       }
-    );
+    });
 
-    res.json({ message: 'Settings updated successfully' });
+    const updatedConversation = await Conversation.findById(conversationId)
+      .populate('participants.userId', 'name email avatar');
+
+    res.json({
+      success: true,
+      conversation: updatedConversation
+    });
 
   } catch (error) {
-    console.error('Error updating settings:', error);
-    res.status(500).json({ message: 'Failed to update settings' });
+    console.error('Add participants error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add participants'
+    });
   }
 });
 

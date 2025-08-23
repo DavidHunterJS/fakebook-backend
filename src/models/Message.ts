@@ -1,33 +1,34 @@
-// src/models/Message.ts
-import mongoose, { Schema, Document } from 'mongoose';
-
-export interface IReaction {
-  userId: mongoose.Types.ObjectId;
-  emoji: string;
-  timestamp: Date;
-}
+// models/Message.ts
+import mongoose, { Schema, Document, Types } from 'mongoose';
 
 export interface IMessage extends Document {
-  conversationId: mongoose.Types.ObjectId;
-  senderId: mongoose.Types.ObjectId;
-  content: {
-    text?: string;
-    file?: {
-      fileName: string;
-      fileUrl: string;
-      fileSize: number;
-      fileType: string;
-    };
-    gif?: any;
+  _id: Types.ObjectId;
+  conversationId: Types.ObjectId;
+  senderId: Types.ObjectId;
+  content: string;
+  encryptedContent?: string; // For when we add encryption
+  messageType: 'text' | 'image' | 'file' | 'system';
+  metadata?: {
+    fileName?: string;
+    fileSize?: number;
+    mimeType?: string;
+    imageUrl?: string;
   };
-  messageType: 'text' | 'file' | 'gif' | 'system';
-  timestamp: Date;
-  reactions: IReaction[];
-  isDeleted?: boolean;
-  deletedBy?: mongoose.Types.ObjectId;
-  deletedAt?: Date;
+  readBy: Array<{
+    userId: Types.ObjectId;
+    readAt: Date;
+  }>;
   editedAt?: Date;
-  replyTo?: mongoose.Types.ObjectId;
+  isDeleted: boolean;
+  replyTo?: Types.ObjectId; // For threaded conversations
+  createdAt: Date;
+  updatedAt: Date;
+  reactions: IReaction[];
+}
+
+export interface IReaction {
+  emoji: string;
+  userId: Types.ObjectId;
 }
 
 const MessageSchema = new Schema<IMessage>({
@@ -40,80 +41,58 @@ const MessageSchema = new Schema<IMessage>({
   senderId: {
     type: Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    index: true
+    required: true
   },
   content: {
-    text: {
-      type: String,
-      maxlength: 5000
-    },
-    file: {
-      fileName: String,
-      fileUrl: String,
-      fileSize: Number,
-      fileType: String
-    },
-    gif: Schema.Types.Mixed
+    type: String,
+    required: true,
+    maxlength: 4000
+  },
+  encryptedContent: {
+    type: String,
+    // We'll use this when encryption is added
   },
   messageType: {
     type: String,
-    enum: ['text', 'file', 'gif', 'system'],
-    default: 'text',
-    required: true
+    enum: ['text', 'image', 'file', 'system'],
+    default: 'text'
   },
-  timestamp: {
-    type: Date,
-    default: Date.now,
-    index: true
+  metadata: {
+    fileName: String,
+    fileSize: Number,
+    mimeType: String,
+    imageUrl: String
   },
-  reactions: [{
+  readBy: [{
     userId: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
+      ref: 'User'
     },
-    emoji: {
-      type: String,
-      required: true
-    },
-    timestamp: {
+    readAt: {
       type: Date,
       default: Date.now
     }
   }],
+  editedAt: Date,
   isDeleted: {
     type: Boolean,
     default: false
   },
-  deletedBy: {
-    type: Schema.Types.ObjectId,
-    ref: 'User'
-  },
-  deletedAt: Date,
-  editedAt: Date,
   replyTo: {
     type: Schema.Types.ObjectId,
     ref: 'Message'
-  }
+  },
+  reactions: [{
+    emoji: { type: String, required: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true }
+  }]
 }, {
   timestamps: true
 });
 
-// Compound indexes for efficient queries
-MessageSchema.index({ conversationId: 1, timestamp: -1 });
-MessageSchema.index({ conversationId: 1, senderId: 1 });
-MessageSchema.index({ conversationId: 1, isDeleted: 1, timestamp: -1 });
+// Indexes for performance
+MessageSchema.index({ conversationId: 1, createdAt: -1 });
+MessageSchema.index({ senderId: 1 });
+MessageSchema.index({ 'readBy.userId': 1 });
 
-// Virtual for read receipts (to be populated from ReadReceipt collection)
-MessageSchema.virtual('readBy', {
-  ref: 'ReadReceipt',
-  localField: '_id',
-  foreignField: 'messageId'
-});
-
-// Ensure virtuals are included in JSON output
-MessageSchema.set('toJSON', { virtuals: true });
-MessageSchema.set('toObject', { virtuals: true });
-
-export default mongoose.model<IMessage>('Message', MessageSchema);
+export const Message = mongoose.model<IMessage>('Message', MessageSchema);
