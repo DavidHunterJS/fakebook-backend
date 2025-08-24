@@ -5,7 +5,6 @@ import User from '../models/User';
 import { IUser, IAuthPayload } from '../types/user.types';
 import { Conversation } from '../models/Conversation'; // Updated import
 import { Message } from '../models/Message'; // Updated import
-import { checkPermission } from '../utils/chatPermissions';
 
 interface CustomSocket extends Socket {
   user?: IUser;
