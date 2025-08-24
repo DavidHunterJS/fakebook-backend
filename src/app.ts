@@ -21,6 +21,10 @@ import rewriteRoutes from './routes/rewrite.routes';
 import imagegenRouter from './routes/genimgage.routes';
 import uploadRoutes from './routes/upload.routes'
 import followRoutes from './routes/follow.routes';
+import conversationRoutes from './routes/conversation.routes';
+import messageRoutes from './routes/message.routes';
+import chatUploadRoutes from './routes/chatUploads.routes';
+
 
 // Load env vars
 dotenv.config();
@@ -78,6 +82,9 @@ app.use('/api', rewriteRoutes);
 app.use('/api', imagegenRouter );
 app.use('/api/upload', uploadRoutes);
 app.use('/api/follows', followRoutes);
+app.use('/api/conversations', conversationRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/chat', chatUploadRoutes);
 
 // Catch-all route handler (must be placed after all other routes)
 app.use('*', (req: Request, res: Response) => {
@@ -105,7 +112,7 @@ const io = new SocketIOServer(server, {
     credentials: true
   }
 });
-
+app.set('io', io);
 // Socket.io connection
 socketHandler(io);
 

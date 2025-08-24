@@ -154,15 +154,60 @@ const deleteFile = async (key: string): Promise<boolean> => {
     return false;
   }
 };
+const chatFileUpload = async (req: Request, res: Response, next: NextFunction) => {
+  memoryUpload.single('chatFile')(req, res, async (err: any) => {
+    if (err) {
+      const message = err instanceof multer.MulterError ? err.message : "Internal server error during file upload.";
+      return res.status(400).json({ message });
+    }
+    
+    try {
+      if (req.file) {
+        // Validate file type and size for chat
+        const allowedTypes = [
+          'image/jpeg', 'image/png', 'image/gif', 'image/webp', // Images
+          'application/pdf', // PDFs
+          'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // Word docs
+          'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // Excel
+          'text/plain', 'text/csv', // Text files
+          'video/mp4', 'video/webm', 'video/ogg', // Videos
+          'audio/mp3', 'audio/wav', 'audio/ogg' // Audio
+        ];
 
+        if (!allowedTypes.includes(req.file.mimetype)) {
+          return res.status(400).json({ 
+            message: 'File type not supported for chat. Supported: images, PDFs, documents, videos, audio files.' 
+          });
+        }
+
+        // Upload to chat folder in S3
+        const key = await uploadToS3(req.file, 'chat');
+        
+        // Add file metadata to request
+        (req as any).chatFile = {
+          s3Key: key,
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          fileType: req.file.mimetype,
+          fileUrl: getFileUrl(key)
+        };
+      }
+      next();
+    } catch (error) {
+      console.error('Chat file upload error:', error);
+      return res.status(500).json({ message: "Failed to upload chat file to S3" });
+    }
+  });
+};
 // --- ✅ 9. UPDATED Exported Middleware ---
 const s3UploadMiddleware = {
   profilePicture: profilePictureUpload,
   coverPhoto: coverPhotoUpload,
   postMedia: postMediaUpload,
+  chatFile: chatFileUpload, // ADD THIS LINE
   deleteFile: deleteFile,
   getFileUrl: getFileUrl,
-  uploadToS3: uploadToS3, // The function is now correctly exported
+  uploadToS3: uploadToS3,
 };
 
 export default s3UploadMiddleware;
