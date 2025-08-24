@@ -49,10 +49,10 @@ describe('User Profile API', () => {
 
 
       expect(response.statusCode).toBe(200);
-
+      console.log('API Response Body:', response.body); 
       // We will leave the final expectation as-is for the moment.
       // The console.log above will tell us exactly how to fix this line.
-      expect(response.body._id).toBe(userId);
+      expect(response.body.user._id).toBe(userId);
     });
   });
 
