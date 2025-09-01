@@ -31,13 +31,3 @@ declare module 'express-serve-static-core' {
     (err: any, req: any, res: any, next: any): any;
   }
 }
-
-declare namespace Express {
-  interface Multer {
-    File: {
-      location?: string;
-      key?: string;
-      bucket?: string;
-    }
-  }
-}

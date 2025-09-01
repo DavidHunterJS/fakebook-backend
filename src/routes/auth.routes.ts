@@ -79,6 +79,14 @@ router.post(
 );
 
 /**
+ * @route   GET api/auth/current
+ * @desc    Get current authenticated user (handles both JWT and Session)
+ * @access  Private
+ */
+router.get('/current', authMiddleware, authController.getCurrentUser);
+
+
+/**
  * @route   GET api/auth/me
  * @desc    Get current user
  * @access  Private
@@ -175,11 +183,11 @@ router.post('/oauth/google', authController.googleAuth);
 router.post('/oauth/facebook', authController.facebookAuth);
 
 /**
- * @route   POST api/auth/logout
+ * @route   GET api/auth/logout
  * @desc    Logout user (useful for tracking session state on server)
  * @access  Private
  */
-router.post('/logout', authMiddleware, authController.logout);
+router.get('/logout', authMiddleware, authController.logout);
 
 /**
  * @route   DELETE api/auth/delete-account

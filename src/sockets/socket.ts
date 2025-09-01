@@ -1,8 +1,8 @@
 // src/sockets/socket.ts
 import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
-import User from '../models/User';
-import { IUser, IAuthPayload } from '../types/user.types';
+import User, { IUser } from '../models/User'; 
+import { IAuthPayload } from '../types/user.types';
 import { Conversation } from '../models/Conversation'; // Updated import
 import { Message } from '../models/Message'; // Updated import
 

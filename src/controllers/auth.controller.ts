@@ -104,7 +104,7 @@ export const register = async (req: Request, res: Response): Promise<Response> =
     });
 
     // Generate token
-    const token = generateToken(user);
+    const token = generateToken(user.toObject());
     
     return res.status(201).json({ 
       token,
@@ -130,55 +130,60 @@ export const register = async (req: Request, res: Response): Promise<Response> =
  * @desc    Authenticate user & get token
  * @access  Public
  */
-export const login = async (req: Request, res: Response): Promise<Response> => {
+export const login = async (req: Request, res: Response): Promise<void> => { // Changed return type
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { email, password } = req.body;
-
-    // Check if user exists
     const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+
+    if (!user || !(await user.comparePassword(password))) {
+      res.status(401).json({ message: 'Invalid credentials' });
+      return;
     }
 
-    // Check if password matches
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    // Check if user is active
     if (!user.isActive) {
-      return res.status(403).json({ message: 'This account has been deactivated' });
+      res.status(403).json({ message: 'This account has been deactivated' });
+      return;
     }
 
-    // Update last login timestamp
-    user.lastActive = new Date();
-    await user.save();
-
-    // Generate token
-    const token = generateToken(user);
-    
-    return res.json({ 
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified
+    // ❗️ THIS IS THE KEY CHANGE ❗️
+    // Instead of generating a token, establish a session.
+    req.logIn(user, async (err) => {
+      if (err) {
+        console.error('Session login error:', err);
+        return res.status(500).send('Server error during login');
       }
+
+      // Session is established. Now update last active and send response.
+      user.lastActive = new Date();
+      await user.save();
+      
+      // Send back ONLY the user object. No token needed.
+      return res.json({
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          // ... other user fields
+        }
+      });
     });
+
   } catch (err) {
     console.error((err as Error).message);
-    return res.status(500).send('Server error');
+    res.status(500).send('Server error');
   }
+};
+
+/**
+ * @desc    Get the currently authenticated user (works for both JWT and session)
+ * @route   GET /api/auth/current
+ * @access  Private
+ */
+export const getCurrentUser = (req: Request, res: Response) => {
+  // The authMiddleware has already validated the user and attached it to req.user.
+  // If the user wasn't valid, this code would never be reached.
+  // We just need to send back the user data.
+  res.status(200).json({ user: req.user });
 };
 
 /**
@@ -479,7 +484,7 @@ export const googleAuth = async (req: Request, res: Response): Promise<Response>
     await user.save();
 
     // Generate token
-    const token = generateToken(user);
+    const token = generateToken(user.toObject());
     
     return res.json({ 
       token,
@@ -556,7 +561,7 @@ export const facebookAuth = async (req: Request, res: Response): Promise<Respons
     await user.save();
 
     // Generate token
-    const token = generateToken(user);
+    const token = generateToken(user.toObject());
     
     return res.json({ 
       token,
