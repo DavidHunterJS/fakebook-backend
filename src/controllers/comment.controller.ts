@@ -5,6 +5,8 @@ import Post from '../models/Post';
 import mongoose from 'mongoose';
 import { NotificationService } from '../services/notification.service';
 import User from '../models/User'; // <--- You'll need this import for User model
+import { Role } from '../config/roles';
+import {AuthenticatedS3Request} from '../types/request.types'
 
 
 
@@ -208,30 +210,36 @@ export const updateComment = async (req: Request, res: Response) => {
 };
 
 /**
- * @desc    Delete a comment
- * @route   DELETE /api/comments/:id
- * @access  Private
+ * @desc Delete a comment
+ * @route DELETE /api/comments/:id
+ * @access Private
  */
-export const deleteComment = async (req: Request, res: Response) => {
+export const deleteComment = async (req: AuthenticatedS3Request, res: Response) => {
   try {
     const { id } = req.params;
     const userId = req.user?.id;
-    const isAdmin = req.user?.isAdmin;
-
+    const userRole = req.user?.role;
+    
     const comment = await Comment.findById(id);
-
+    
     if (!comment) {
       return res.status(404).json({ message: 'Comment not found' });
     }
 
     // Check comment ownership or admin status
-    if (comment.user.toString() !== userId && !isAdmin) {
+    const isAdmin = userRole === Role.ADMIN;
+    const isModerator = userRole === Role.MODERATOR;
+    const isOwner = comment.user.toString() === userId;
+    
+    // Allow deletion if: owner, moderator, or admin
+    if (!isOwner && !isModerator && !isAdmin) {
       return res.status(403).json({ message: 'Not authorized to delete this comment' });
     }
 
     await Comment.findByIdAndDelete(id);
-
+    
     return res.status(200).json({ message: 'Comment deleted successfully' });
+    
   } catch (error) {
     console.error('Error deleting comment:', error);
     return res.status(500).json({ message: 'Server error' });

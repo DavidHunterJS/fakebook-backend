@@ -10,7 +10,7 @@ const router = express.Router();
 // GET /api/messages/:conversationId - Get messages for a conversation
   router.get('/:conversationId', auth, async (req: Request, res: Response) => {
     try {
-      const userId = new Types.ObjectId(req.user.id);
+      const userId = new Types.ObjectId(req.user?.id);
       const conversationId = new Types.ObjectId(req.params.conversationId);
       
       console.log('Loading messages - User ID:', userId.toString()); // Debug
@@ -118,7 +118,7 @@ const router = express.Router();
 // POST /api/messages - Send a new message
 router.post('/', auth, async (req: Request, res: Response) => {
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     const { 
       conversationId, 
       content, 
@@ -234,7 +234,7 @@ router.post('/', auth, async (req: Request, res: Response) => {
 // PUT /api/messages/:id - Edit a message
 router.put('/:id', auth, async (req: Request, res: Response) => {
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     const messageId = new Types.ObjectId(req.params.id);
     const { content } = req.body;
 
@@ -308,7 +308,7 @@ router.put('/:id', auth, async (req: Request, res: Response) => {
 // DELETE /api/messages/:id - Delete a message
 router.delete('/:id', auth, async (req: Request, res: Response) => {
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     const messageId = new Types.ObjectId(req.params.id);
 
     // Find message and verify ownership
@@ -386,7 +386,7 @@ router.delete('/:id', auth, async (req: Request, res: Response) => {
 // POST /api/messages/:id/read - Mark message as read
 router.post('/:id/read', auth, async (req: Request, res: Response) => {
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     const messageId = new Types.ObjectId(req.params.id);
 
     // Add user to readBy array if not already there
@@ -422,7 +422,7 @@ router.post('/:id/read', auth, async (req: Request, res: Response) => {
 // GET /api/messages/search/:conversationId - Search messages in conversation
 router.get('/search/:conversationId', auth, async (req: Request, res: Response) => {
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     const conversationId = new Types.ObjectId(req.params.conversationId);
     const { q, limit = 20 } = req.query;
 

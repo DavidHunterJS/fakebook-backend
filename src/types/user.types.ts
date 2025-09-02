@@ -41,8 +41,6 @@ export interface IUserBase {
   isEmailVerified: boolean;
   followingCount: number;
   followersCount: number;
-  
-  // Google OAuth fields
   googleId?: string;
   authProvider: 'local' | 'google';
   isOAuthUser: boolean;
@@ -58,8 +56,6 @@ export interface IUser extends IUserBase, Document {
   privacySettings: IPrivacySettings;
   reports: IUserReport[];
   isReported: boolean;
-  
-  // Google OAuth methods
   canLoginLocally(): boolean;
   getDisplayName(): string;
 }

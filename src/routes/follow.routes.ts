@@ -1,5 +1,5 @@
 // src/routes/follow.routes.ts
-import { Router } from 'express';
+import express, { Router, RequestHandler } from 'express';
 import { FollowController } from '../controllers/follow.controller';
 import  authenticate  from '../middlewares/auth.middleware';
 import { validateObjectId } from '../middlewares/validation.middleware';
@@ -14,7 +14,7 @@ const router = Router();
 router.post('/:userId', 
   authenticate, 
   validateObjectId('userId'), 
-  FollowController.followUser
+  FollowController.followUser as express.RequestHandler
 );
 
 /**
@@ -25,7 +25,7 @@ router.post('/:userId',
 router.delete('/:userId', 
   authenticate, 
   validateObjectId('userId'), 
-  FollowController.unfollowUser
+  FollowController.unfollowUser as express.RequestHandler
 );
 
 /**
@@ -56,7 +56,7 @@ router.get('/:userId/following',
 router.get('/:userId/status', 
   authenticate, 
   validateObjectId('userId'), 
-  FollowController.checkFollowStatus
+  FollowController.checkFollowStatus as express.RequestHandler
 );
 
 /**
@@ -67,7 +67,7 @@ router.get('/:userId/status',
 router.get('/:userId/mutual', 
   authenticate, 
   validateObjectId('userId'), 
-  FollowController.getMutualFollows
+  FollowController.getMutualFollows as express.RequestHandler
 );
 
 /**
@@ -77,7 +77,7 @@ router.get('/:userId/mutual',
  */
 router.get('/suggestions', 
   authenticate, 
-  FollowController.getSuggestedUsers
+  FollowController.getSuggestedUsers as express.RequestHandler
 );
 
 export default router;

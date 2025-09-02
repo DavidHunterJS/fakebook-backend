@@ -10,7 +10,7 @@ const router = express.Router();
 // GET /api/conversations - Get user's conversations
 router.get('/', auth, async (req: Request, res: Response) => {
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     
     const filter = {
       participants: {
@@ -72,7 +72,7 @@ router.get('/', auth, async (req: Request, res: Response) => {
 // GET /api/conversations/:id - Get specific conversation
 router.get('/:id', auth, async (req: Request, res: Response) => {
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     const conversationId = new Types.ObjectId(req.params.id);
 
     const conversation = await Conversation.findOne({
@@ -113,7 +113,7 @@ router.get('/:id', auth, async (req: Request, res: Response) => {
 router.post('/', auth, async (req: Request, res: Response) => {
   console.log('--- CREATE CONVERSATION: RUNNING LATEST BACKEND CODE ---');
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     const { type, participants, title } = req.body;
 
     // --- Validation ---
@@ -253,7 +253,7 @@ router.post('/', auth, async (req: Request, res: Response) => {
 // PUT /api/conversations/:id - Update conversation
 router.put('/:id', auth, async (req: Request, res: Response) => {
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     const conversationId = new Types.ObjectId(req.params.id);
     const { title, description, settings, encryptionSettings } = req.body;
 
@@ -313,7 +313,7 @@ router.put('/:id', auth, async (req: Request, res: Response) => {
 // DELETE /api/conversations/:id - Archive conversation
 router.delete('/:id', auth, async (req: Request, res: Response) => {
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     const conversationId = new Types.ObjectId(req.params.id);
 
     // Check if user is participant
@@ -374,7 +374,7 @@ router.delete('/:id', auth, async (req: Request, res: Response) => {
 // POST /api/conversations/:id/participants - Add participants
 router.post('/:id/participants', auth, async (req: Request, res: Response) => {
   try {
-    const userId = new Types.ObjectId(req.user.id);
+    const userId = new Types.ObjectId(req.user?.id);
     const conversationId = new Types.ObjectId(req.params.id);
     const { participants } = req.body;
 
