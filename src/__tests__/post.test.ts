@@ -8,24 +8,32 @@ import Post from '../models/Post';
 // --- Mock external services ---
 jest.mock('../services/notification.service');
 
-let agent: any;
-let userId: string;
-
 describe('Post API Endpoints', () => {
 
   // --- Suite for POST /api/posts ---
   describe('POST /api/posts - Create Post', () => {
-    let token: string;
+    let agent: any;
     let userId: string;
 
     beforeEach(async () => {
+      // Create agent to maintain session cookies
+      agent = request.agent(app);
+      
       const user = {
-        username: `post_creator_${Date.now()}`, email: `post_creator_${Date.now()}@test.com`,
-        password: 'Password123!', firstName: 'Post', lastName: 'Creator',
+        username: `post_creator_${Date.now()}`, 
+        email: `post_creator_${Date.now()}@test.com`,
+        password: 'Password123!', 
+        firstName: 'Post', 
+        lastName: 'Creator',
       };
-      await request(app).post('/api/auth/register').send(user);
-      const loginRes = await request(app).post('/api/auth/login').send({ email: user.email, password: user.password });
-      token = loginRes.body.token;
+      
+      // Register and login with agent
+      await agent.post('/api/auth/register').send(user);
+      const loginRes = await agent.post('/api/auth/login').send({ 
+        email: user.email, 
+        password: user.password 
+      });
+      
       userId = loginRes.body.user.id;
     });
 
@@ -42,69 +50,109 @@ describe('Post API Endpoints', () => {
   
   // --- Suite for DELETE /api/posts/:id ---
   describe('DELETE /api/posts/:id - Delete Post', () => {
-    let userAToken: string, userBToken: string, postToDeleteId: string;
+    let agentA: any, agentB: any, postToDeleteId: string;
     
     beforeEach(async () => {
+      // Create separate agents for each user
+      agentA = request.agent(app);
+      agentB = request.agent(app);
+      
+      // Setup User A
       const userA = {
-          username: `user_a_${Date.now()}`, email: `usera_${Date.now()}@test.com`,
-          password: 'PasswordA123!', firstName: 'User', lastName: 'A',
+        username: `user_a_${Date.now()}`, 
+        email: `usera_${Date.now()}@test.com`,
+        password: 'PasswordA123!', 
+        firstName: 'User', 
+        lastName: 'A',
       };
-      await request(app).post('/api/auth/register').send(userA);
-      const loginA = await request(app).post('/api/auth/login').send({ email: userA.email, password: userA.password });
-      userAToken = loginA.body.token;
+      await agentA.post('/api/auth/register').send(userA);
+      await agentA.post('/api/auth/login').send({ 
+        email: userA.email, 
+        password: userA.password 
+      });
 
+      // Setup User B
       const userB = {
-          username: `user_b_${Date.now()}`, email: `userb_${Date.now()}@test.com`,
-          password: 'PasswordB123!', firstName: 'User', lastName: 'B',
+        username: `user_b_${Date.now()}`, 
+        email: `userb_${Date.now()}@test.com`,
+        password: 'PasswordB123!', 
+        firstName: 'User', 
+        lastName: 'B',
       };
-      await request(app).post('/api/auth/register').send(userB);
-      const loginB = await request(app).post('/api/auth/login').send({ email: userB.email, password: userB.password });
-      userBToken = loginB.body.token;
+      await agentB.post('/api/auth/register').send(userB);
+      await agentB.post('/api/auth/login').send({ 
+        email: userB.email, 
+        password: userB.password 
+      });
 
-      const postRes = await request(app).post('/api/posts').set('Authorization', `Bearer ${userAToken}`).send({ text: 'This will be deleted' });
+      // Create post with User A's session
+      const postRes = await agentA.post('/api/posts').send({ text: 'This will be deleted' });
       postToDeleteId = postRes.body.post._id;
     });
 
     it('should return 200 if the user is the author', async () => {
-      const response = await request(app).delete(`/api/posts/${postToDeleteId}`).set('Authorization', `Bearer ${userAToken}`);
+      const response = await agentA.delete(`/api/posts/${postToDeleteId}`);
       expect(response.statusCode).toBe(200);
     });
 
     it('should return 403 if a user tries to delete another user\'s post', async () => {
-      const response = await request(app).delete(`/api/posts/${postToDeleteId}`).set('Authorization', `Bearer ${userBToken}`);
+      const response = await agentB.delete(`/api/posts/${postToDeleteId}`);
       expect(response.statusCode).toBe(403);
     });
   });
 
   // --- Suite for PUT /api/posts/:id ---
   describe('PUT /api/posts/:id - Update Post', () => {
-      let userAToken: string, userBToken: string, postToUpdateId: string;
+    let agentA: any, agentB: any, postToUpdateId: string;
 
-      beforeEach(async () => {
-          const userA = { username: `user_a_upd_${Date.now()}`, email: `usera_upd_${Date.now()}@test.com`, password: 'PasswordA123!', firstName: 'User', lastName: 'A' };
-          await request(app).post('/api/auth/register').send(userA);
-          const loginA = await request(app).post('/api/auth/login').send({ email: userA.email, password: userA.password });
-          userAToken = loginA.body.token;
-
-          const userB = { username: `user_b_upd_${Date.now()}`, email: `userb_upd_${Date.now()}@test.com`, password: 'PasswordB123!', firstName: 'User', lastName: 'B' };
-          await request(app).post('/api/auth/register').send(userB);
-          const loginB = await request(app).post('/api/auth/login').send({ email: userB.email, password: userB.password });
-          userBToken = loginB.body.token;
-
-          const postRes = await request(app).post('/api/posts').set('Authorization', `Bearer ${userAToken}`).send({ text: 'Original text' });
-          postToUpdateId = postRes.body.post._id;
+    beforeEach(async () => {
+      // Create separate agents for each user
+      agentA = request.agent(app);
+      agentB = request.agent(app);
+      
+      // Setup User A
+      const userA = { 
+        username: `user_a_upd_${Date.now()}`, 
+        email: `usera_upd_${Date.now()}@test.com`, 
+        password: 'PasswordA123!', 
+        firstName: 'User', 
+        lastName: 'A' 
+      };
+      await agentA.post('/api/auth/register').send(userA);
+      await agentA.post('/api/auth/login').send({ 
+        email: userA.email, 
+        password: userA.password 
       });
 
-      it('should return 200 and update the post if the user is the author', async () => {
-          const response = await request(app).put(`/api/posts/${postToUpdateId}`).set('Authorization', `Bearer ${userAToken}`).send({ text: 'Updated text!' });
-          expect(response.statusCode).toBe(200);
-          expect(response.body.text).toBe('Updated text!');
+      // Setup User B
+      const userB = { 
+        username: `user_b_upd_${Date.now()}`, 
+        email: `userb_upd_${Date.now()}@test.com`, 
+        password: 'PasswordB123!', 
+        firstName: 'User', 
+        lastName: 'B' 
+      };
+      await agentB.post('/api/auth/register').send(userB);
+      await agentB.post('/api/auth/login').send({ 
+        email: userB.email, 
+        password: userB.password 
       });
 
-      it('should return 403 if a user tries to update another user\'s post', async () => {
-          const response = await request(app).put(`/api/posts/${postToUpdateId}`).set('Authorization', `Bearer ${userBToken}`).send({ text: 'Should fail' });
-          expect(response.statusCode).toBe(403);
-      });
+      // Create post with User A's session
+      const postRes = await agentA.post('/api/posts').send({ text: 'Original text' });
+      postToUpdateId = postRes.body.post._id;
+    });
+
+    it('should return 200 and update the post if the user is the author', async () => {
+      const response = await agentA.put(`/api/posts/${postToUpdateId}`).send({ text: 'Updated text!' });
+      expect(response.statusCode).toBe(200);
+      expect(response.body.text).toBe('Updated text!');
+    });
+
+    it('should return 403 if a user tries to update another user\'s post', async () => {
+      const response = await agentB.put(`/api/posts/${postToUpdateId}`).send({ text: 'Should fail' });
+      expect(response.statusCode).toBe(403);
+    });
   });
 
 });
