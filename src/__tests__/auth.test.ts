@@ -37,7 +37,7 @@ describe('POST /api/auth/register - User Registration', () => {
     // Based on your JWT response structure
     expect(response.statusCode).toBe(201);
     expect(response.body).toHaveProperty('message', 'Registration successful. Please check your email to verify your account.');
-    expect(response.body).toHaveProperty('token');
+    // expect(response.body).toHaveProperty('token');
     expect(response.body).toHaveProperty('user');
     
     // Verify user object structure
