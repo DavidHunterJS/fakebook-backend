@@ -119,7 +119,7 @@ router.get(
   [
     param('id').isMongoId().withMessage('Invalid post ID')
   ],
-  getReactions
+  getReactions as express.RequestHandler
 );
 
 
@@ -134,7 +134,7 @@ router.post(
       .isIn(Object.values(REACTION_TYPES))
       .withMessage(`Invalid reaction type. Must be one of: ${Object.values(REACTION_TYPES).join(', ')}`)
   ],
-  reactionController.addOrUpdateReaction
+  reactionController.addOrUpdateReaction as express.RequestHandler
 );
 
 router.delete(
@@ -142,7 +142,7 @@ router.delete(
   [
     param('id').isMongoId().withMessage('Invalid post ID')
   ],
-  reactionController.removeReaction
+  reactionController.removeReaction as express.RequestHandler
 );
 
 

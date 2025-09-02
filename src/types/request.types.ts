@@ -1,63 +1,44 @@
 import { Request } from 'express';
-import { FileWithS3 } from './file.types';
 
-// If you have access to the IUser type, import it
-// import { IUser } from './path/to/user/types';
-
-/**
- * Extend Express's Request interface to include your file types
- * This uses module augmentation to properly extend Express types
- */
-declare global {
-  namespace Express {
-    interface Request {
-      file?: FileWithS3;
-      /**
-       * The 'files' property can be:
-       * - An array of files (from a single field, e.g., upload.array('photos'))
-       * - An object where each key is a fieldname and the value is an array of files
-       *   (e.g., upload.fields([{ name: 'avatar' }, { name: 'gallery' }]))
-       */
-      files?: FileWithS3[] | { [fieldname: string]: FileWithS3[] };
-    }
-  }
+// Define your complete S3 file interface
+export interface S3UploadedFile {
+  // Standard Multer properties
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  destination?: string;
+  filename?: string;
+  path?: string;
+  buffer?: Buffer;
+  
+  // S3-specific properties
+  s3Key: string;
+  s3Bucket: string;
+  s3Location: string;
+  s3ETag?: string;
+  // Add any other S3-specific properties here
 }
 
 /**
- * Base S3 upload request - now just uses the extended Express Request
+ * Request interfaces using completely separate types
  */
-export interface S3UploadRequest extends Request {
-  // No need to redeclare file, files, or user - they're already in Request
+export interface S3UploadRequest extends Omit<Request, 'file' | 'files'> {
+  // Keep original Multer properties for compatibility
+  file?: Express.Multer.File;
+  files?: Express.Multer.File[] | { [fieldname: string]: Express.Multer.File[] };
+  
+  // Add S3-specific properties
+  s3File?: S3UploadedFile;
+  s3Files?: S3UploadedFile[] | { [fieldname: string]: S3UploadedFile[] };
 }
 
 /**
  * For controllers where you know auth middleware has been applied
- * and user is guaranteed to exist
  */
-export interface AuthenticatedS3Request extends Request {
-  user: NonNullable<Request['user']>; // Makes user required and properly typed
-}
-
-/**
- * Alternative approach if you can't modify global Express types
- * Use Omit to remove the conflicting user property and add your own
- */
-export interface CustomS3UploadRequest extends Omit<Request, 'user' | 'file' | 'files'> {
-  file?: FileWithS3;
-  files?: FileWithS3[] | { [fieldname: string]: FileWithS3[] };
-  user?: {
-    id: string;
-    [key: string]: any;
-  };
-}
-
-export interface CustomAuthenticatedS3Request extends Omit<Request, 'user' | 'file' | 'files'> {
-  file?: FileWithS3;
-  files?: FileWithS3[] | { [fieldname: string]: FileWithS3[] };
-  user: {
-    id: string;
-    [key: string]: any;
-  };
+export interface AuthenticatedS3Request extends S3UploadRequest {
+  user: NonNullable<Request['user']>;
 }
 
 /**
@@ -68,22 +49,61 @@ export function isAuthenticatedRequest(req: S3UploadRequest): req is Authenticat
 }
 
 /**
- * Type guard to check if files is an array vs object
+ * Type guard to check if s3Files is an array vs object
  */
-export function isFileArray(files: FileWithS3[] | { [fieldname: string]: FileWithS3[] }): files is FileWithS3[] {
+export function isS3FileArray(
+  files: S3UploadedFile[] | { [fieldname: string]: S3UploadedFile[] } | undefined
+): files is S3UploadedFile[] {
   return Array.isArray(files);
 }
 
 /**
- * Helper type for when you know you're dealing with a specific file field structure
+ * Helper to convert Multer.File to S3UploadedFile
  */
-export interface MultiFieldS3Request extends AuthenticatedS3Request {
-  files: { [fieldname: string]: FileWithS3[] };
+export function multerFileToS3File(
+  multerFile: Express.Multer.File,
+  s3Data: {
+    s3Key: string;
+    s3Bucket: string;
+    s3Location: string;
+    s3ETag?: string;
+  }
+): S3UploadedFile {
+  return {
+    fieldname: multerFile.fieldname,
+    originalname: multerFile.originalname,
+    encoding: multerFile.encoding,
+    mimetype: multerFile.mimetype,
+    size: multerFile.size,
+    destination: multerFile.destination,
+    filename: multerFile.filename,
+    path: multerFile.path,
+    buffer: multerFile.buffer,
+    ...s3Data,
+  };
 }
 
 /**
- * Helper type for when you know you're dealing with an array of files
+ * Helper to get S3 file from request
  */
+export function getS3File(req: S3UploadRequest): S3UploadedFile | undefined {
+  return req.s3File;
+}
+
+/**
+ * Helper to get S3 files from request
+ */
+export function getS3Files(req: S3UploadRequest): S3UploadedFile[] | { [fieldname: string]: S3UploadedFile[] } | undefined {
+  return req.s3Files;
+}
+
+/**
+ * Helper types for specific file field structures
+ */
+export interface MultiFieldS3Request extends AuthenticatedS3Request {
+  s3Files: { [fieldname: string]: S3UploadedFile[] };
+}
+
 export interface SingleFieldS3Request extends AuthenticatedS3Request {
-  files: FileWithS3[];
+  s3Files: S3UploadedFile[];
 }
