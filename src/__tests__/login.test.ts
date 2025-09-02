@@ -24,7 +24,6 @@ const existingUserWrongPassword = {
 
 // --- Test Suite ---
 describe('POST /api/auth/login', () => {
-
   // ** IMPORTANT: Create the user before running any login tests **
   beforeAll(async () => {
     // Use the registration endpoint to create our test user
@@ -34,19 +33,23 @@ describe('POST /api/auth/login', () => {
   });
 
   describe('successful login', () => {
-    it('should return 200 and token for valid credentials', async () => {
-      const response = await request(app)
+    it('should return 200 and user data for valid credentials', async () => {
+      const agent = request.agent(app);
+      
+      const response = await agent
         .post('/api/auth/login')
         .send({
           email: testUser.email,
           password: testUser.password
         });
-      
-      // Check for success
+
+      // Check for success - session-based login
       expect(response.statusCode).toBe(200);
-      // expect(response.body).toHaveProperty('token');
       expect(response.body).toHaveProperty('user');
       expect(response.body.user.email).toBe(testUser.email);
+      
+      // No token expected in session-based auth
+      // Session cookie should be automatically set by the agent
     });
   });
 
@@ -55,7 +58,7 @@ describe('POST /api/auth/login', () => {
       const response = await request(app)
         .post('/api/auth/login')
         .send(nonExistentUserCredentials);
-      
+
       expect(response.statusCode).toBe(401);
       // CORRECTED: Check for 'message' key
       expect(response.body).toEqual({ message: 'Invalid credentials' });
@@ -65,7 +68,7 @@ describe('POST /api/auth/login', () => {
       const response = await request(app)
         .post('/api/auth/login')
         .send(existingUserWrongPassword);
-        
+
       expect(response.statusCode).toBe(401);
       // CORRECTED: Check for 'message' key
       expect(response.body).toEqual({ message: 'Invalid credentials' });
@@ -76,16 +79,18 @@ describe('POST /api/auth/login', () => {
       const response = await request(app)
         .post('/api/auth/login')
         .send({ password: 'somePassword' });
+
       expect(response.statusCode).toBe(400);
       expect(response.body).toHaveProperty('errors');
     });
 
     it('should return 400 for missing password', async () => {
-        const response = await request(app)
-            .post('/api/auth/login')
-            .send({ email: testUser.email });
-        expect(response.statusCode).toBe(400);
-        expect(response.body).toHaveProperty('errors');
+      const response = await request(app)
+        .post('/api/auth/login')
+        .send({ email: testUser.email });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.body).toHaveProperty('errors');
     });
   });
 
@@ -93,7 +98,6 @@ describe('POST /api/auth/login', () => {
   // To make it pass, you'd need to register a user with that password
   // in the beforeAll hook, then attempt to log in with it. For simplicity,
   // this example assumes the main password is sufficient.
-
   describe('security considerations', () => {
     it('should not expose sensitive information in error responses', async () => {
       const response = await request(app)
