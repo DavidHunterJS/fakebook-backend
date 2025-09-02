@@ -8,6 +8,8 @@ import Post from '../models/Post';
 // --- Mock external services ---
 jest.mock('../services/notification.service');
 
+let agent: any;
+let userId: string;
 
 describe('Post API Endpoints', () => {
 
@@ -28,9 +30,8 @@ describe('Post API Endpoints', () => {
     });
 
     it('should return 201 and create a new post with valid text', async () => {
-      const response = await request(app)
+      const response = await agent
         .post('/api/posts')
-        .set('Authorization', `Bearer ${token}`)
         .send({ text: 'A test post' });
 
       expect(response.statusCode).toBe(201);

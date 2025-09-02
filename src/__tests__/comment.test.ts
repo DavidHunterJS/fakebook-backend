@@ -8,14 +8,17 @@ jest.mock('../services/notification.service');
 
 describe('Comment API Endpoints', () => {
   describe('POST /api/comments', () => {
-    // These variables are reset for each test, following the working pattern.
-    let token: string;
+    // Use agent to maintain session cookies across requests
+    let agent: any;
     let userId: string;
     let postId: string;
     let userPayload: any;
 
     // Use beforeEach, exactly like your working post.test.ts
     beforeEach(async () => {
+      // Create a new agent for each test to maintain cookies
+      agent = request.agent(app);
+
       // 1. Create a user
       userPayload = {
         username: `comment_user_${Date.now()}`,
@@ -25,7 +28,7 @@ describe('Comment API Endpoints', () => {
         lastName: 'User',
       };
 
-      const registerRes = await request(app).post('/api/auth/register').send(userPayload);
+      const registerRes = await agent.post('/api/auth/register').send(userPayload);
       
       // Debug: Check if registration was successful
       console.log('Registration response status:', registerRes.statusCode);
@@ -36,8 +39,8 @@ describe('Comment API Endpoints', () => {
       // Ensure registration was successful
       expect(registerRes.statusCode).toBe(201);
 
-      // 2. Log in with that user
-      const loginRes = await request(app)
+      // 2. Log in with that user (agent will automatically store session cookies)
+      const loginRes = await agent
         .post('/api/auth/login')
         .send({ email: userPayload.email, password: userPayload.password });
 
@@ -51,21 +54,16 @@ describe('Comment API Endpoints', () => {
 
       // Check if login was successful before proceeding
       expect(loginRes.statusCode).toBe(200);
-      expect(loginRes.body.token).toBeDefined();
       expect(loginRes.body.user).toBeDefined();
 
-      token = loginRes.body.token;
-      
       // Try different possible user ID fields based on your API structure
       userId = loginRes.body.user.id || loginRes.body.user._id;
       
       console.log('Extracted userId:', userId);
-      console.log('Extracted token:', token ? 'Token exists' : 'No token');
 
-      // 3. Create a post to comment on
-      const postRes = await request(app)
+      // 3. Create a post to comment on (using agent with session)
+      const postRes = await agent
         .post('/api/posts')
-        .set('Authorization', `Bearer ${token}`)
         .send({ text: 'A post for our comment test' });
 
       console.log('Post creation response status:', postRes.statusCode);
@@ -79,9 +77,9 @@ describe('Comment API Endpoints', () => {
     it('should return 201 and the new comment for an authenticated user', async () => {
       const commentText = 'This is a fantastic post!';
       
-      const response = await request(app)
+      // Use agent (with session) instead of token header
+      const response = await agent
         .post('/api/comments')
-        .set('Authorization', `Bearer ${token}`)
         .send({ postId, text: commentText });
 
       console.log('Comment creation response status:', response.statusCode);
@@ -95,7 +93,8 @@ describe('Comment API Endpoints', () => {
       expect(response.body.user._id || response.body.user.id).toBe(userId); 
     });
 
-    it('should return 401 if no token is provided', async () => {
+    it('should return 401 if no session is provided', async () => {
+      // Use fresh request (without agent/session) to test unauthorized access
       const response = await request(app)
         .post('/api/comments')
         .send({ postId, text: 'This should fail.' });
@@ -106,9 +105,9 @@ describe('Comment API Endpoints', () => {
     it('should return 404 if the postId does not exist', async () => {
       const fakePostId = new mongoose.Types.ObjectId();
       
-      const response = await request(app)
+      // Use agent (with session)
+      const response = await agent
         .post('/api/comments')
-        .set('Authorization', `Bearer ${token}`)
         .send({ postId: fakePostId, text: 'A comment on a ghost post.' });
 
       expect(response.statusCode).toBe(404);
@@ -116,9 +115,9 @@ describe('Comment API Endpoints', () => {
     });
 
     it('should return 400 if the comment text is missing', async () => {
-      const response = await request(app)
+      // Use agent (with session)
+      const response = await agent
         .post('/api/comments')
-        .set('Authorization', `Bearer ${token}`)
         .send({ postId });
 
       expect(response.statusCode).toBe(400);

@@ -4,10 +4,13 @@ import { app } from '../app'; // Ensure this path is correct
 import User from '../models/User'; // Ensure this path is correct
 
 describe('User Profile API', () => {
-  let token: string;
+  let agent: any;
   let userId: string;
 
   beforeEach(async () => {
+    // Create agent to maintain session cookies
+    agent = request.agent(app);
+
     const userPayload = {
       username: `testuser_${Date.now()}`,
       email: `test_${Date.now()}@test.com`,
@@ -16,10 +19,11 @@ describe('User Profile API', () => {
       lastName: 'User',
     };
 
-    const registrationResponse = await request(app)
+    // Register with agent
+    const registrationResponse = await agent
       .post('/api/auth/register')
       .send(userPayload);
-    
+
     // REVERTING to 201, as you correctly pointed out.
     expect(registrationResponse.status).toBe(201);
 
@@ -27,29 +31,27 @@ describe('User Profile API', () => {
     if (!user) {
       throw new Error('Test setup failed: User was not created in the database.');
     }
-    
-    user.isEmailVerified = true; 
+
+    user.isEmailVerified = true;
     await user.save();
     userId = user.id;
 
-    const loginResponse = await request(app)
+    // Login with agent (automatically stores session cookies)
+    const loginResponse = await agent
       .post('/api/auth/login')
       .send({ email: userPayload.email, password: userPayload.password });
 
-    expect(loginResponse.status).toBe(200); 
-
-    token = loginResponse.body.token;
+    expect(loginResponse.status).toBe(200);
+    // No token extraction needed - session is handled by agent
   });
 
   describe('GET /api/auth/me', () => {
     it('should return 200 and the current user profile', async () => {
-      const response = await request(app)
-        .get('/api/auth/me')
-        .set('Authorization', `Bearer ${token}`);
-
+      // Use agent with session instead of Authorization header
+      const response = await agent.get('/api/auth/me');
 
       expect(response.statusCode).toBe(200);
-      console.log('API Response Body:', response.body); 
+      console.log('API Response Body:', response.body);
       // We will leave the final expectation as-is for the moment.
       // The console.log above will tell us exactly how to fix this line.
       expect(response.body.user._id).toBe(userId);
@@ -63,9 +65,9 @@ describe('User Profile API', () => {
         bio: 'This is my new bio.',
       };
 
-      const response = await request(app)
+      // Use agent with session instead of Authorization header
+      const response = await agent
         .put('/api/users/profile')
-        .set('Authorization', `Bearer ${token}`)
         .send(updatePayload);
 
       expect(response.statusCode).toBe(200);
@@ -75,17 +77,18 @@ describe('User Profile API', () => {
     it('should return 400 for invalid data (bio too long)', async () => {
       const invalidPayload = { bio: 'a'.repeat(501) };
 
-      const response = await request(app)
+      // Use agent with session instead of Authorization header
+      const response = await agent
         .put('/api/users/profile')
-        .set('Authorization', `Bearer ${token}`)
         .send(invalidPayload);
 
       expect(response.statusCode).toBe(400);
     });
   });
-  
+
   describe('Auth Middleware', () => {
-    it('should return 401 if no token is provided', async () => {
+    it('should return 401 if no session is provided', async () => {
+      // Use fresh request (no agent/session) to test unauthorized access
       const response = await request(app)
         .put('/api/users/profile')
         .send({ firstName: 'ShouldFail' });
