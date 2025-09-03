@@ -1,18 +1,18 @@
 // src/__tests__/user.test.ts
 import request from 'supertest';
-import { app } from '../app'; // Ensure this path is correct
-import User from '../models/User'; // Ensure this path is correct
+import { app } from '../app';
+import User from '../models/User';
 
 describe('User Profile API', () => {
-  // Use SuperAgentTest for type safety with the agent
-  let agent: any;
+  let agent: request.SuperAgentTest;
   let userId: string;
   let userEmail: string;
+  let authToken: string; // Add token storage if using JWT
 
-  // Before each test, create a fresh user and log in to get an authenticated agent
   beforeEach(async () => {
-    agent = request.agent(app); // Create a new agent to handle cookies for each test
-
+    // Create a new agent that maintains cookies
+    agent = request.agent(app);
+    
     const userPayload = {
       username: `profileuser_${Date.now()}`,
       email: `profile_${Date.now()}@test.com`,
@@ -20,34 +20,67 @@ describe('User Profile API', () => {
       firstName: 'Test',
       lastName: 'User',
     };
-    userEmail = userPayload.email; // Store email for assertions
+    
+    userEmail = userPayload.email;
 
     // Register the user
-    await agent.post('/api/auth/register').send(userPayload);
+    const registerResponse = await agent
+      .post('/api/auth/register')
+      .send(userPayload);
 
-    // Manually find and verify the user to ensure a clean state
+    // Manually find and verify the user
     const user = await User.findOne({ email: userEmail });
     if (!user) {
       throw new Error('Test setup failed: User not found after registration.');
     }
+    
     user.isEmailVerified = true;
     await user.save();
-    userId = user.id; // Store the user ID
+    userId = user.id;
 
-    // Log in to establish the session on the agent
-    await agent
+    // Log in to establish the session
+    const loginResponse = await agent
       .post('/api/auth/login')
-      .send({ email: userPayload.email, password: userPayload.password });
+      .send({ 
+        email: userPayload.email, 
+        password: userPayload.password 
+      });
+
+    // Debug: Check if login was successful
+    console.log('Login response status:', loginResponse.status);
+    console.log('Login response headers:', loginResponse.headers);
+    
+    // If your app uses JWT tokens, extract and store the token
+    if (loginResponse.headers['set-cookie']) {
+      console.log('Cookies set:', loginResponse.headers['set-cookie']);
+    }
+    
+    // If using JWT in response body, store it
+    if (loginResponse.body.token) {
+      authToken = loginResponse.body.token;
+    }
+
+    // Ensure login was successful
+    expect(loginResponse.status).toBe(200);
   });
 
   describe('GET /api/auth/me', () => {
     it('should return 200 and the current user profile', async () => {
-      // Use the authenticated agent to make the request
-      const response = await agent.get('/api/auth/me');
+      let request = agent.get('/api/auth/me');
+      
+      // If using JWT token in Authorization header
+      if (authToken) {
+        request = request.set('Authorization', `Bearer ${authToken}`);
+      }
+      
+      const response = await request;
+
+      // Debug: Log the response for troubleshooting
+      console.log('GET /api/auth/me response status:', response.status);
+      console.log('GET /api/auth/me response body:', response.body);
 
       // Assertions
       expect(response.statusCode).toBe(200);
-      // **FIX:** Expect the user object directly on the body, not nested.
       expect(response.body._id).toBe(userId);
       expect(response.body.email).toBe(userEmail);
     });
@@ -61,10 +94,18 @@ describe('User Profile API', () => {
         bio: 'This is my new bio.',
       };
 
-      // Use the authenticated agent to update the profile
-      const response = await agent
-        .put('/api/users/profile')
-        .send(updatePayload);
+      let request = agent.put('/api/users/profile').send(updatePayload);
+      
+      // If using JWT token in Authorization header
+      if (authToken) {
+        request = request.set('Authorization', `Bearer ${authToken}`);
+      }
+
+      const response = await request;
+
+      // Debug logging
+      console.log('PUT /api/users/profile response status:', response.status);
+      console.log('PUT /api/users/profile response body:', response.body);
 
       // Assertions
       expect(response.statusCode).toBe(200);
@@ -74,10 +115,15 @@ describe('User Profile API', () => {
 
     it('should return 400 for invalid data (bio too long)', async () => {
       const invalidPayload = { bio: 'a'.repeat(501) };
+      
+      let request = agent.put('/api/users/profile').send(invalidPayload);
+      
+      // If using JWT token in Authorization header
+      if (authToken) {
+        request = request.set('Authorization', `Bearer ${authToken}`);
+      }
 
-      const response = await agent
-        .put('/api/users/profile')
-        .send(invalidPayload);
+      const response = await request;
 
       expect(response.statusCode).toBe(400);
     });
@@ -87,7 +133,6 @@ describe('User Profile API', () => {
     it('should return 401 if no session is provided', async () => {
       // Use a fresh, unauthenticated request to test the middleware
       const response = await request(app).get('/api/auth/me');
-
       expect(response.statusCode).toBe(401);
     });
   });
