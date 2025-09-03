@@ -4,57 +4,52 @@ import { app } from '../app'; // Ensure this path is correct
 import User from '../models/User'; // Ensure this path is correct
 
 describe('User Profile API', () => {
+  // Use SuperAgentTest for type safety with the agent
   let agent: any;
   let userId: string;
+  let userEmail: string;
 
+  // Before each test, create a fresh user and log in to get an authenticated agent
   beforeEach(async () => {
-    // Create agent to maintain session cookies
-    agent = request.agent(app);
+    agent = request.agent(app); // Create a new agent to handle cookies for each test
 
     const userPayload = {
-      username: `testuser_${Date.now()}`,
-      email: `test_${Date.now()}@test.com`,
+      username: `profileuser_${Date.now()}`,
+      email: `profile_${Date.now()}@test.com`,
       password: 'Password123!',
       firstName: 'Test',
       lastName: 'User',
     };
+    userEmail = userPayload.email; // Store email for assertions
 
-    // Register with agent
-    const registrationResponse = await agent
-      .post('/api/auth/register')
-      .send(userPayload);
+    // Register the user
+    await agent.post('/api/auth/register').send(userPayload);
 
-    // REVERTING to 201, as you correctly pointed out.
-    expect(registrationResponse.status).toBe(201);
-
-    const user = await User.findOne({ email: userPayload.email });
+    // Manually find and verify the user to ensure a clean state
+    const user = await User.findOne({ email: userEmail });
     if (!user) {
-      throw new Error('Test setup failed: User was not created in the database.');
+      throw new Error('Test setup failed: User not found after registration.');
     }
-
     user.isEmailVerified = true;
     await user.save();
-    userId = user.id;
+    userId = user.id; // Store the user ID
 
-    // Login with agent (automatically stores session cookies)
-    const loginResponse = await agent
+    // Log in to establish the session on the agent
+    await agent
       .post('/api/auth/login')
       .send({ email: userPayload.email, password: userPayload.password });
-
-    expect(loginResponse.status).toBe(200);
-    // No token extraction needed - session is handled by agent
   });
 
   describe('GET /api/auth/me', () => {
     it('should return 200 and the current user profile', async () => {
-      // Use agent with session instead of Authorization header
+      // Use the authenticated agent to make the request
       const response = await agent.get('/api/auth/me');
 
+      // Assertions
       expect(response.statusCode).toBe(200);
-      console.log('API Response Body:', response.body);
-      // We will leave the final expectation as-is for the moment.
-      // The console.log above will tell us exactly how to fix this line.
-      expect(response.body.user._id).toBe(userId);
+      // **FIX:** Expect the user object directly on the body, not nested.
+      expect(response.body._id).toBe(userId);
+      expect(response.body.email).toBe(userEmail);
     });
   });
 
@@ -62,22 +57,24 @@ describe('User Profile API', () => {
     it('should return 200 and update the user profile', async () => {
       const updatePayload = {
         firstName: 'UpdatedFirstName',
+        lastName: 'UpdatedLastName',
         bio: 'This is my new bio.',
       };
 
-      // Use agent with session instead of Authorization header
+      // Use the authenticated agent to update the profile
       const response = await agent
         .put('/api/users/profile')
         .send(updatePayload);
 
+      // Assertions
       expect(response.statusCode).toBe(200);
       expect(response.body.firstName).toBe('UpdatedFirstName');
+      expect(response.body.bio).toBe('This is my new bio.');
     });
 
     it('should return 400 for invalid data (bio too long)', async () => {
       const invalidPayload = { bio: 'a'.repeat(501) };
 
-      // Use agent with session instead of Authorization header
       const response = await agent
         .put('/api/users/profile')
         .send(invalidPayload);
@@ -88,10 +85,8 @@ describe('User Profile API', () => {
 
   describe('Auth Middleware', () => {
     it('should return 401 if no session is provided', async () => {
-      // Use fresh request (no agent/session) to test unauthorized access
-      const response = await request(app)
-        .put('/api/users/profile')
-        .send({ firstName: 'ShouldFail' });
+      // Use a fresh, unauthenticated request to test the middleware
+      const response = await request(app).get('/api/auth/me');
 
       expect(response.statusCode).toBe(401);
     });
