@@ -145,7 +145,12 @@ app.get('/api/auth/google/callback',
     res.redirect(`${frontendUrl}/dashboard?auth=success`);
   }
 );
+const isProduction = process.env.NODE_ENV === 'production';
 
+// This is crucial for Express to trust Heroku's proxy in production
+if (isProduction) {
+  app.set('trust proxy', 1);
+}
 
 
 // Define API Routes
