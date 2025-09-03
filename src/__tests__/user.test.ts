@@ -4,7 +4,7 @@ import { app } from '../app';
 import User from '../models/User';
 
 describe('User Profile API', () => {
-  let agent: request.SuperAgentTest;
+  let agent: any;
   let userId: string;
   let userEmail: string;
   let authToken: string; // Add token storage if using JWT
