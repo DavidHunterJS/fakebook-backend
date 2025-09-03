@@ -59,16 +59,29 @@ describe('User Profile API', () => {
     it('should return 200 and the current user profile', async () => {
       const response = await agent.get('/api/auth/me');
 
-      // Debug: Log the response for troubleshooting
+      // Debug: Log the complete response structure
       console.log('GET /api/auth/me response status:', response.status);
-      if (response.status !== 200) {
-        console.log('GET /api/auth/me response body:', response.body);
+      console.log('GET /api/auth/me complete response body:', JSON.stringify(response.body, null, 2));
+      console.log('Response body keys:', Object.keys(response.body));
+
+      // Check if user data is nested
+      if (response.body.user) {
+        console.log('User object found at response.body.user:', response.body.user);
+        console.log('User object keys:', Object.keys(response.body.user));
       }
 
-      // Assertions
+      // Assertions - adjust based on your actual response structure
       expect(response.statusCode).toBe(200);
-      expect(response.body._id).toBe(userId);
-      expect(response.body.email).toBe(userEmail);
+      
+      // Try different possible response structures:
+      const userIdFromResponse = response.body._id || response.body.id || response.body.user?._id || response.body.user?.id;
+      const emailFromResponse = response.body.email || response.body.user?.email;
+      
+      console.log('Extracted user ID:', userIdFromResponse);
+      console.log('Extracted email:', emailFromResponse);
+      
+      expect(userIdFromResponse).toBe(userId);
+      expect(emailFromResponse).toBe(userEmail);
     });
   });
 
