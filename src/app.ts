@@ -48,9 +48,10 @@ const sessionMiddleware = session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    sameSite: 'none', // Required for cross-site cookie
-    secure: true,     // Required for sameSite='none'
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    secure: process.env.NODE_ENV === 'production', // Only secure in production
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    httpOnly: true // Add this for security
   }
 });
 
