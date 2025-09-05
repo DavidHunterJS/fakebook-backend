@@ -4,10 +4,6 @@ import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import User from '../models/User'; // Adjust path to your User model
 import { Role } from '../config/roles'; 
 
-const callbackURL = process.env.NODE_ENV === 'production'
-  ? process.env.GOOGLE_CB_URL_PROD
-  : process.env.GOOGLE_CB_URL_DEV;
-
 // Validate environment variables
 if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
   console.error('Missing Google OAuth credentials in environment variables');
@@ -100,7 +96,7 @@ const verifyCallback = async (
 passport.use('google', new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: callbackURL,
+  callbackURL: process.env.GOOGLE_CALLBACK_URL,
   scope: ['profile', 'email'],
   passReqToCallback: false
 }, verifyCallback));
