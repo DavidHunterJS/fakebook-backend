@@ -100,7 +100,7 @@ const verifyCallback = async (
 passport.use('google', new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: callbackURL,
+  callbackURL: "https://trippy.lol/api/auth/google/callback",
   scope: ['profile', 'email'],
   passReqToCallback: false
 }, verifyCallback));

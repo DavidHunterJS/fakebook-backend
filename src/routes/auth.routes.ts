@@ -1,10 +1,106 @@
 // src/routes/auth.routes.ts
-import express, { Router } from 'express';
+import express, { Request, Response, Router } from 'express';
 import { body } from 'express-validator';
 import * as authController from '../controllers/auth.controller';
 import authMiddleware from '../middlewares/auth.middleware';
+import User from '../models/User';
+import { OAuth2Client } from 'google-auth-library';
 
 const router: Router = express.Router();
+
+
+const googleClient = new OAuth2Client(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  'https://trippy.lol/api/auth/google/callback' // Frontend callback URL
+);
+
+interface GoogleUserProfile {
+  id: string;
+  email: string;
+  given_name?: string;
+  family_name?: string;
+  picture?: string;
+  verified_email?: boolean;
+}
+
+router.post('/google/exchange', async (req: Request, res: Response) => {
+  try {
+    const { code }: { code: string } = req.body;
+    
+    console.log('Received OAuth code exchange request');
+    
+    if (!code) {
+      console.error('No authorization code provided');
+      return res.status(400).json({ error: 'Authorization code is required' });
+    }
+    
+    console.log('Exchanging authorization code for tokens...');
+    
+    // Exchange authorization code for tokens
+    const { tokens } = await googleClient.getToken(code);
+    googleClient.setCredentials(tokens);
+    
+    console.log('Tokens received, fetching user profile...');
+    
+    // Get user info from Google
+    const response = await googleClient.request({
+      url: 'https://www.googleapis.com/oauth2/v2/userinfo',
+    });
+    
+    const profile = response.data as GoogleUserProfile;
+    console.log('Google profile received:', { 
+      email: profile.email, 
+      id: profile.id 
+    });
+    
+    // Find or create user in your database
+    let user = await User.findOne({ email: profile.email });
+    
+    if (!user) {
+      console.log('Creating new user from Google profile');
+      user = new User({
+        email: profile.email,
+        googleId: profile.id,
+        firstName: profile.given_name || 'User',
+        lastName: profile.family_name || '',
+        profilePicture: profile.picture,
+        isEmailVerified: true, // Google emails are pre-verified
+        username: profile.email.split('@')[0] + '_' + Date.now(), // Generate unique username
+      });
+      await user.save();
+      console.log('New user created:', user._id);
+    } else {
+      console.log('Existing user found, updating Google info');
+      // Update existing user with Google info if needed
+      user.googleId = profile.id;
+      user.isEmailVerified = true;
+      if (profile.picture) user.profilePicture = profile.picture;
+      await user.save();
+    }
+    
+    // Set user in session (same as your regular login)
+    (req.session as any).userId = user._id;
+    console.log('Session set for user:', user._id);
+    
+    res.json({ 
+      success: true, 
+      user: { 
+        id: user._id, 
+        email: user.email, 
+        firstName: user.firstName,
+        lastName: user.lastName 
+      }
+    });
+    
+  } catch (error) {
+    console.error('OAuth exchange error:', error);
+    res.status(500).json({ 
+      error: 'OAuth exchange failed',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
 
 /**
  * @route   POST api/auth/register
