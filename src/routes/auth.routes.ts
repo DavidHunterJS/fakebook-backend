@@ -12,7 +12,7 @@ const router: Router = express.Router();
 const googleClient = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  'https://trippy.lol/api/auth/google/callback' // Frontend callback URL
+  'https://trippy.lol/auth/callback' // Frontend callback URL
 );
 
 interface GoogleUserProfile {
@@ -25,6 +25,9 @@ interface GoogleUserProfile {
 }
 
 router.post('/google/exchange', async (req: Request, res: Response) => {
+  console.log('🔍 Step 5: Backend received request');
+  console.log('🔍 Request body:', req.body);
+  console.log('🔍 Code present:', !!req.body.code);
   try {
     const { code }: { code: string } = req.body;
     
@@ -93,6 +96,9 @@ router.post('/google/exchange', async (req: Request, res: Response) => {
       }
     });
     
+    console.log('🔍 Step 6: Google tokens received');
+    console.log('🔍 Step 7: User profile:', profile.email);
+
   } catch (error) {
     console.error('OAuth exchange error:', error);
     res.status(500).json({ 
