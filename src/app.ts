@@ -23,7 +23,7 @@ import adminRoutes from './routes/admin.routes';
 import generationRoutes from './routes/generation.routes';
 import rewriteRoutes from './routes/rewrite.routes';
 import imagegenRouter from './routes/genimgage.routes';
-import uploadRoutes from './routes/upload.routes'
+import uploadRoutes from './routes/upload.routes';
 import followRoutes from './routes/follow.routes';
 import conversationRoutes from './routes/conversation.routes';
 import messageRoutes from './routes/message.routes';
@@ -44,6 +44,7 @@ const sessionMiddleware = session({
 });
 
 const app = express();
+const isProduction = process.env.NODE_ENV === 'production';
 
 if (process.env.NODE_ENV !== 'test') {
   connectDB();
@@ -57,23 +58,11 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 
-// Request logger for debugging
-app.use((req: Request, res: Response, next: NextFunction) => {
-  console.log(`[REQUEST LOGGER] Incoming: ${req.method} ${req.originalUrl}`);
-  next();
-});
-
 app.use(sessionMiddleware);
 app.use(passport.initialize());
 app.use(passport.session());
 
-// --- Static Files & Health Check ---
-const staticUploadsPath = path.join(__dirname, '../uploads');
-app.use('/uploads', express.static(staticUploadsPath));
-app.get('/health', (req, res) => res.status(200).send('OK'));
-app.get('/', (req, res) => res.json({ message: 'API is running' }));
-
-if (process.env.NODE_ENV === 'production') {
+if (isProduction) {
   app.set('trust proxy', 1);
 }
 
@@ -111,14 +100,13 @@ const server = http.createServer(app);
 const io = new SocketIOServer(server, { cors: { origin: allowedOrigins, credentials: true } });
 app.set('io', io);
 
-// Attach session and passport middleware to Socket.IO
-io.use((socket, next) => sessionMiddleware(socket.request as Request, {} as Response, next as NextFunction));
-io.use((socket, next) => passport.initialize()(socket.request as Request, {} as Response, next as NextFunction));
-io.use((socket, next) => passport.session()(socket.request as Request, {} as Response, next as NextFunction));
+const wrap = (middleware: any) => (socket: any, next: any) => middleware(socket.request, {}, next);
+io.use(wrap(sessionMiddleware));
+io.use(wrap(passport.initialize()));
+io.use(wrap(passport.session()));
 io.use((socket, next) => {
     const req = socket.request as Request;
     if (req.user) {
-        (socket as any).user = req.user;
         next();
     } else {
         next(new Error('unauthorized'));
