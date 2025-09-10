@@ -1,6 +1,6 @@
 // src/__tests__/auth.test.ts
 import request from 'supertest';
-import { app } from '../app'; // Updated import path
+import app  from '../app'; // Updated import path
 // Import your User model for database verification (optional)
 // import User from '../models/User';
 

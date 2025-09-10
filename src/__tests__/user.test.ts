@@ -1,6 +1,6 @@
 // src/__tests__/user.test.ts - Fixed for session cookies
 import request from 'supertest';
-import { app } from '../app';
+import app  from '../app';
 import User from '../models/User';
 
 describe('User Profile API', () => {
