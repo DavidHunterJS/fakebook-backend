@@ -1,4 +1,3 @@
-// src/app.ts
 import express, { Request, Response, NextFunction } from 'express';
 import connectDB from './config/db';
 import cors from 'cors';
@@ -8,20 +7,10 @@ import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
 import socketHandler from './sockets/socket';
 import session from 'express-session';
-import passport from 'passport';
+import passport from './config/passport';
 
-// Load env vars FIRST
+// Load env vars
 dotenv.config();
-
-// Verify Google OAuth is configured
-if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-  console.warn('⚠️  Google OAuth not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your .env file');
-} else {
-  console.log('✅ Google OAuth configured successfully');
-}
-
-// THEN import passport config (after env vars are loaded)
-import './config/passport';
 
 // Import routes
 import authRoutes from './routes/auth.routes';
@@ -41,120 +30,54 @@ import messageRoutes from './routes/message.routes';
 import chatUploadRoutes from './routes/chatUploads.routes';
 import workflowRoutes from './routes/workflow.routes';
 
-
-// Session middleware (required for Passport)
+// Session middleware
 const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET || 'your-session-secret-here',
   resave: false,
   saveUninitialized: false,
   cookie: {
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    secure: process.env.NODE_ENV === 'production', // Only secure in production
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    httpOnly: true // Add this for security
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000,
+    httpOnly: true
   }
 });
 
-
-// Load env vars
-dotenv.config();
-
-// Initialize express
 const app = express();
 
-// Support multiple origins
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
-  : ['http://localhost:3000'];
-
-console.log('Allowed Origins:', allowedOrigins);
-
-// Connect to Database (only if not in test environment)
 if (process.env.NODE_ENV !== 'test') {
   connectDB();
 }
 
-// Init Middleware
-app.use(express.json());
-app.use(cors({
-  origin: allowedOrigins,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  credentials: true
-}));
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : ['http://localhost:3000'];
 
-// Add error handling middleware for passport
-app.use((error: any, req: Request, res: Response, next: NextFunction) => {
-  if (error.name === 'TokenError') {
-    console.error('=== OAuth Token Error ===');
-    console.error('Error message:', error.message);
-    console.error('Error details:', error);
-    console.error('Request URL:', req.url);
-    console.error('========================');
-    return res.redirect('/login?error=oauth_token_error');
-  }
-  next(error);
+// --- Middleware Setup ---
+app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(express.json());
+
+// Request logger for debugging
+app.use((req: Request, res: Response, next: NextFunction) => {
+  console.log(`[REQUEST LOGGER] Incoming: ${req.method} ${req.originalUrl}`);
+  next();
 });
 
-// Apply session middleware to Express
 app.use(sessionMiddleware);
-
-// Passport middleware for Express
 app.use(passport.initialize());
 app.use(passport.session());
 
-
-// --- Static File Serving ---
+// --- Static Files & Health Check ---
 const staticUploadsPath = path.join(__dirname, '../uploads');
-console.log('Express will serve static files for /uploads from absolute path:', staticUploadsPath);
 app.use('/uploads', express.static(staticUploadsPath));
-// ---------------------------
+app.get('/health', (req, res) => res.status(200).send('OK'));
+app.get('/', (req, res) => res.json({ message: 'API is running' }));
 
-// --- Add this health check route ---
-app.get('/health', (req: Request, res: Response) => {
-  res.status(200).send('OK');
-});
-// ------------------------------------
-
-// Root route handler
-app.get('/', (req: Request, res: Response) => {
-  res.json({ message: 'Fakebook API is running' });
-});
-
-// Google OAuth routes
-app.get('/api/auth/google', 
-  passport.authenticate('google', { 
-    scope: ['profile', 'email'],
-    accessType: 'offline',
-    prompt: 'consent'
-  })
-);
-
-app.get('/api/auth/google/callback',
-  passport.authenticate('google', { 
-    failureRedirect: '/login?error=auth_failed',
-    failureFlash: false 
-  }),
-  (req: Request, res: Response) => {
-    console.log('OAuth success! User:', {
-      id: (req.user as any)?._id,
-      email: (req.user as any)?.email,
-      name: (req.user as any)?.firstName + ' ' + (req.user as any)?.lastName
-    });
-    
-    // Successful authentication - redirect to frontend
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    res.redirect(`${frontendUrl}/dashboard?auth=success`);
-  }
-);
-const isProduction = process.env.NODE_ENV === 'production';
-
-// This is crucial for Express to trust Heroku's proxy in production
-if (isProduction) {
+if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-
-// Define API Routes
+// --- API ROUTES ---
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);
@@ -172,80 +95,47 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/chat', chatUploadRoutes);
 app.use('/api/workflow', workflowRoutes);
 
-// Catch-all route handler (must be placed after all other routes)
-app.use('*', (req: Request, res: Response) => {
-  res.status(404).json({
-    message: 'Route not found',
-    path: req.originalUrl
-  });
+
+// --- 404 and Error Handlers ---
+app.use('*', (req, res) => {
+  res.status(404).json({ message: 'Route not found', path: req.originalUrl });
 });
 
-// Error handler - Should typically be defined AFTER all routes
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error(err.stack);
-  if (req.originalUrl.startsWith('/api/')) {
-    return res.status(500).json({ message: 'Server Error', error: err.message });
-  }
-  res.status(500).send('Server Error');
+  res.status(500).json({ message: 'Server Error', error: err.message });
 });
 
-// Create server and Socket.IO setup
+// --- Server and Socket.IO Setup ---
 const server = http.createServer(app);
-const io = new SocketIOServer(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ['GET', 'POST'],
-    credentials: true
-  }
-});
+const io = new SocketIOServer(server, { cors: { origin: allowedOrigins, credentials: true } });
 app.set('io', io);
 
-// 1. Make Express session available to Socket.IO
+// Attach session and passport middleware to Socket.IO
+io.use((socket, next) => sessionMiddleware(socket.request as Request, {} as Response, next as NextFunction));
+io.use((socket, next) => passport.initialize()(socket.request as Request, {} as Response, next as NextFunction));
+io.use((socket, next) => passport.session()(socket.request as Request, {} as Response, next as NextFunction));
 io.use((socket, next) => {
-  sessionMiddleware(socket.request as Request, {} as Response, next as NextFunction);
+    const req = socket.request as Request;
+    if (req.user) {
+        (socket as any).user = req.user;
+        next();
+    } else {
+        next(new Error('unauthorized'));
+    }
 });
-
-// 2. Initialize Passport for Socket.IO
-io.use((socket, next) => {
-  passport.initialize()(socket.request as Request, {} as Response, next as NextFunction);
-});
-
-// 3. Make Passport session available to Socket.IO
-io.use((socket, next) => {
-  passport.session()(socket.request as Request, {} as Response, next as NextFunction);
-});
-
-// 4. NOW you can check for the user and attach it to the socket
-io.use((socket, next) => {
-  const req = socket.request as Request;
-  if (req.user) {
-    (socket as any).user = req.user; // Attach user to the socket object
-    next();
-  } else {
-    // Deny connection if not authenticated
-    next(new Error('unauthorized'));
-  }
-});
-
-// Socket.io connection
 socketHandler(io);
 
-// Only start server if this file is run directly (not imported)
+
+// --- Server Start ---
 if (require.main === module) {
   const PORT = process.env.PORT || 5000;
-  
-  server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log('Confirmed static /uploads serving from:', staticUploadsPath);
-  });
-
-  // Handle unhandled promise rejections
+  server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   process.on('unhandledRejection', (err: Error) => {
     console.log('Unhandled Rejection:', err.message);
     server.close(() => process.exit(1));
   });
 }
 
-// Export for testing
-export { app, server, io };
 export default app;
+

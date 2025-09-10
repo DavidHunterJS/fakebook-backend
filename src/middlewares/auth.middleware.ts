@@ -9,6 +9,17 @@ dotenv.config();
 
 const authMiddleware: RequestHandler = async (req, res, next): Promise<void | Response> => {
   console.log("Auth middleware called");
+  console.log("Request path:", req.path);
+  console.log("Request URL:", req.url);
+  console.log("Request method:", req.method);
+ 
+  if (req.path === '/auth/verify' || 
+      req.path === '/verify-magic-link' || 
+      req.url.includes('verify-magic-link') ||
+      (req.path === '/current' && req.headers.referer && req.headers.referer.includes('/auth/verify'))) {
+    console.log("Skipping auth for verification-related route");
+    return next();
+  }
   
   // Method 1: Check for session-based authentication (Passport.js/OAuth)
   if (req.isAuthenticated && req.isAuthenticated() && req.user) {

@@ -4,109 +4,60 @@ import { body } from 'express-validator';
 import * as authController from '../controllers/auth.controller';
 import authMiddleware from '../middlewares/auth.middleware';
 import User from '../models/User';
-import { OAuth2Client } from 'google-auth-library';
+import crypto from 'crypto';
+import MagicToken from '../models/MagicLink';
+import { sendMagicLinkEmail } from '../config/email';
+import jwt from 'jsonwebtoken';
+import { IAuthPayload } from '../types/user.types';
+
+
 
 const router: Router = express.Router();
 
-
-const googleClient = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  'https://trippy.lol/auth/callback' // Frontend callback URL
-);
-
-interface GoogleUserProfile {
-  id: string;
-  email: string;
-  given_name?: string;
-  family_name?: string;
-  picture?: string;
-  verified_email?: boolean;
-}
-
-router.post('/google/exchange', async (req: Request, res: Response) => {
-  console.log('🔍 Step 5: Backend received request');
-  console.log('🔍 Request body:', req.body);
-  console.log('🔍 Code present:', !!req.body.code);
+router.post('/magic-link', async (req: Request, res: Response) => {
   try {
-    const { code }: { code: string } = req.body;
+    const { email } = req.body;
+    console.log('Creating magic link for:', email);
     
-    console.log('Received OAuth code exchange request');
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
     
-    if (!code) {
-      console.error('No authorization code provided');
-      return res.status(400).json({ error: 'Authorization code is required' });
-    }
+    console.log('Generated token:', token);
+    console.log('Expires at:', expiresAt);
     
-    console.log('Exchanging authorization code for tokens...');
-    
-    // Exchange authorization code for tokens
-    const { tokens } = await googleClient.getToken(code);
-    googleClient.setCredentials(tokens);
-    
-    console.log('Tokens received, fetching user profile...');
-    
-    // Get user info from Google
-    const response = await googleClient.request({
-      url: 'https://www.googleapis.com/oauth2/v2/userinfo',
-    });
-    
-    const profile = response.data as GoogleUserProfile;
-    console.log('Google profile received:', { 
-      email: profile.email, 
-      id: profile.id 
-    });
-    
-    // Find or create user in your database
-    let user = await User.findOne({ email: profile.email });
-    
-    if (!user) {
-      console.log('Creating new user from Google profile');
-      user = new User({
-        email: profile.email,
-        googleId: profile.id,
-        firstName: profile.given_name || 'User',
-        lastName: profile.family_name || '',
-        profilePicture: profile.picture,
-        isEmailVerified: true, // Google emails are pre-verified
-        username: profile.email.split('@')[0] + '_' + Date.now(), // Generate unique username
-      });
-      await user.save();
-      console.log('New user created:', user._id);
-    } else {
-      console.log('Existing user found, updating Google info');
-      // Update existing user with Google info if needed
-      user.googleId = profile.id;
-      user.isEmailVerified = true;
-      if (profile.picture) user.profilePicture = profile.picture;
-      await user.save();
-    }
-    
-    // Set user in session (same as your regular login)
-    (req.session as any).userId = user._id;
-    console.log('Session set for user:', user._id);
-    
-    res.json({ 
-      success: true, 
-      user: { 
-        id: user._id, 
-        email: user.email, 
-        firstName: user.firstName,
-        lastName: user.lastName 
-      }
-    });
-    
-    console.log('🔍 Step 6: Google tokens received');
-    console.log('🔍 Step 7: User profile:', profile.email);
+    // Delete existing tokens
+    const deletedCount = await MagicToken.deleteMany({ email: email.toLowerCase() });
+    console.log('Deleted old tokens:', deletedCount.deletedCount);
 
-  } catch (error) {
-    console.error('OAuth exchange error:', error);
-    res.status(500).json({ 
-      error: 'OAuth exchange failed',
-      details: error instanceof Error ? error.message : 'Unknown error'
+    // Create new token
+    const savedToken = await MagicToken.create({
+      email: email.toLowerCase(),
+      token,
+      expiresAt
     });
+    
+    console.log('Saved token to database:', {
+      id: savedToken._id,
+      email: savedToken.email,
+      token: savedToken.token.substring(0, 10) + '...',
+      expiresAt: savedToken.expiresAt
+    });
+
+    await sendMagicLinkEmail(email, token);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Magic link creation error:', error);
+    res.status(500).json({ error: 'Failed to send magic link' });
   }
 });
+
+/**
+ * @route   GET /api/auth/verify
+ * @desc    Verifies a magic link token and logs the user in.
+ * @access  Public
+ */
+router.get('/verify', authController.verifyMagicLink);
+
 
 /**
  * @route   POST api/auth/register
@@ -181,11 +132,87 @@ router.post(
 );
 
 /**
- * @route   GET api/auth/current
- * @desc    Get current authenticated user (handles both JWT and Session)
- * @access  Private
+ * @route GET api/auth/current
+ * @desc Get current authenticated user (handles both JWT and Session, returns null if not authenticated)
+ * @access Public (but returns user data only if authenticated)
  */
-router.get('/current', authMiddleware, authController.getCurrentUser);
+router.get('/current', async (req: Request, res: Response) => {
+  try {
+    let authenticatedUser = null;
+
+    // Method 1: Check for session-based authentication (OAuth, Magic Link)
+    if (req.isAuthenticated && req.isAuthenticated() && req.user) {
+      authenticatedUser = await User.findById((req.user as any)._id).select('-password');
+    }
+    
+    // Method 2: Check session userId (for magic links)
+    else if ((req.session as any)?.userId) {
+      authenticatedUser = await User.findById((req.session as any).userId).select('-password');
+    }
+    
+    // Method 3: Check for JWT token authentication
+    else {
+      const token = extractTokenFromRequest(req);
+      if (token) {
+        const user = await authenticateWithJWT(token);
+        if (user) {
+          authenticatedUser = user;
+        }
+      }
+    }
+
+    // Update last active time for authenticated user
+    if (authenticatedUser && authenticatedUser.isActive) {
+      authenticatedUser.lastActive = new Date();
+      await authenticatedUser.save();
+    }
+
+    // Always return consistent format
+    res.json({ user: authenticatedUser });
+
+  } catch (error) {
+    console.error('Error in /current route:', error);
+    res.json({ user: null });
+  }
+});
+
+// Helper function to extract token from request headers
+const extractTokenFromRequest = (req: Request): string | null => {
+  const authHeader = req.header('authorization');
+  let token = req.header('x-auth-token');
+
+  if (!token && authHeader) {
+    if (authHeader.startsWith('Bearer ')) {
+      token = authHeader.slice(7).trim();
+    } else {
+      token = authHeader.trim();
+    }
+  }
+
+  return token || null;
+};
+
+// Helper function to authenticate with JWT
+const authenticateWithJWT = async (token: string): Promise<any | null> => {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    console.error('JWT_SECRET not configured');
+    return null;
+  }
+
+  try {
+    const decoded = jwt.verify(token, jwtSecret) as IAuthPayload;
+    
+    if (decoded.user && decoded.user.id) {
+      const user = await User.findById(decoded.user.id).select('-password');
+      return user && user.isActive ? user : null;
+    }
+  } catch (jwtError) {
+    console.log('Invalid JWT token in /current request:', jwtError instanceof Error ? jwtError.message : 'Unknown error');
+  }
+
+  return null;
+};
 
 
 /**
@@ -193,8 +220,18 @@ router.get('/current', authMiddleware, authController.getCurrentUser);
  * @desc    Get current user
  * @access  Private
  */
-router.get('/me', authMiddleware, authController.getMe);
-
+router.get('/me', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    if (req.user) {
+      res.json({ user: req.user });
+    } else {
+      res.status(401).json({ message: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error in /me route:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 /**
  * @route   PUT api/auth/password
  * @desc    Change password
@@ -270,26 +307,13 @@ router.get('/verify/:token', authController.verifyEmail);
  */
 router.post('/resend-verification', authMiddleware, authController.resendVerification);
 
-/**
- * @route   POST api/auth/oauth/google
- * @desc    Authenticate with Google
- * @access  Public
- */
-router.post('/oauth/google', authController.googleAuth);
-
-/**
- * @route   POST api/auth/oauth/facebook
- * @desc    Authenticate with Facebook
- * @access  Public
- */
-router.post('/oauth/facebook', authController.facebookAuth);
 
 /**
  * @route   GET api/auth/logout
  * @desc    Logout user (useful for tracking session state on server)
  * @access  Private
  */
-router.get('/logout', authMiddleware, authController.logout);
+router.post('/logout', authMiddleware, authController.logout);
 
 /**
  * @route   DELETE api/auth/delete-account
