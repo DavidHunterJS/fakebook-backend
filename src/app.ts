@@ -12,12 +12,25 @@ import passport from './config/passport';
 // Import all your route files
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
-// ... etc.
+import postRoutes from './routes/post.routes';
+import commentRoutes from './routes/comment.routes';
+import friendRoutes from './routes/friend.routes';
+import notificationRoutes from './routes/notification.routes';
+import adminRoutes from './routes/admin.routes';
+import generationRoutes from './routes/generation.routes';
+import rewriteRoutes from './routes/rewrite.routes';
+import imagegenRouter from './routes/genimgage.routes';
+import uploadRoutes from './routes/upload.routes';
+import followRoutes from './routes/follow.routes';
+import conversationRoutes from './routes/conversation.routes';
+import messageRoutes from './routes/message.routes';
+import chatUploadRoutes from './routes/chatUploads.routes';
+import workflowRoutes from './routes/workflow.routes';
+
 
 dotenv.config();
 
 // --- DIAGNOSTIC LOGGING ---
-// This will print the exact values from your Heroku environment to the logs at startup.
 console.log('--- [SERVER STARTUP DIAGNOSTICS] ---');
 console.log(`NODE_ENV: ${process.env.NODE_ENV}`);
 console.log(`COOKIE_DOMAIN from env: ${process.env.COOKIE_DOMAIN}`);
@@ -39,8 +52,8 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    // This log is crucial for debugging.
-    console.log(`[CORS] Incoming request from origin: ${origin}`);
+    // This log is not strictly needed anymore but is good to keep.
+    // console.log(`[CORS] Incoming request from origin: ${origin}`);
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -79,7 +92,21 @@ app.use(passport.session());
 // --- API ROUTES ---
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
-// ... (register all your other routes)
+app.use('/api/posts', postRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/friends', friendRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api', generationRoutes);
+app.use('/api', rewriteRoutes);
+app.use('/api', imagegenRouter);
+app.use('/api/upload', uploadRoutes);
+app.use('/api/follows', followRoutes);
+app.use('/api/conversations', conversationRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/chat', chatUploadRoutes);
+app.use('/api/workflow', workflowRoutes);
+
 
 // --- 404 and Error Handlers ---
 app.use('*', (req, res) => {
@@ -100,13 +127,25 @@ io.use(wrap(sessionMiddleware));
 io.use(wrap(passport.initialize()));
 io.use(wrap(passport.session()));
 
+// ✅ --- ENHANCED SOCKET AUTHENTICATION LOGGING ---
 io.use((socket, next) => {
-  const req = socket.request as Request;
+  const req = socket.request as any; // Use 'any' to inspect the raw request object
+  console.log('--- [SOCKET AUTHENTICATION] ---');
+  // Check if the session middleware successfully attached the session object.
+  console.log('[SOCKET AUTH] Session object exists:', !!req.session);
+  // Log the session ID if it exists.
+  console.log('[SOCKET AUTH] Session ID:', req.session?.id);
+  // Check if Passport's deserializeUser successfully attached the user object.
+  console.log('[SOCKET AUTH] User object exists:', !!req.user);
   if (req.user) {
+    console.log('[SOCKET AUTH] User ID from session:', req.user.id);
+    console.log('[SOCKET AUTH] Authentication SUCCEEDED');
     next();
   } else {
+    console.error('[SOCKET AUTH] Authentication FAILED: No user on request object after middleware.');
     next(new Error('unauthorized'));
   }
+  console.log('---------------------------------');
 });
 
 socketHandler(io);
