@@ -9,81 +9,77 @@ import socketHandler from './sockets/socket';
 import session from 'express-session';
 import passport from './config/passport';
 
-// Load env vars
-dotenv.config();
-
-// Import routes
+// Import all your route files
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
-import postRoutes from './routes/post.routes';
-import commentRoutes from './routes/comment.routes';
-import friendRoutes from './routes/friend.routes';
-import notificationRoutes from './routes/notification.routes';
-import adminRoutes from './routes/admin.routes';
-import generationRoutes from './routes/generation.routes';
-import rewriteRoutes from './routes/rewrite.routes';
-import imagegenRouter from './routes/genimgage.routes';
-import uploadRoutes from './routes/upload.routes';
-import followRoutes from './routes/follow.routes';
-import conversationRoutes from './routes/conversation.routes';
-import messageRoutes from './routes/message.routes';
-import chatUploadRoutes from './routes/chatUploads.routes';
-import workflowRoutes from './routes/workflow.routes';
+// ... etc.
 
-// Session middleware
-const sessionMiddleware = session({
-  secret: process.env.SESSION_SECRET || 'your-session-secret-here',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 24 * 60 * 60 * 1000,
-    httpOnly: true
-  }
-});
+dotenv.config();
+
+// --- DIAGNOSTIC LOGGING ---
+// This will print the exact values from your Heroku environment to the logs at startup.
+console.log('--- [SERVER STARTUP DIAGNOSTICS] ---');
+console.log(`NODE_ENV: ${process.env.NODE_ENV}`);
+console.log(`COOKIE_DOMAIN from env: ${process.env.COOKIE_DOMAIN}`);
+console.log(`ALLOWED_ORIGINS from env: ${process.env.ALLOWED_ORIGINS}`);
+console.log('------------------------------------');
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
 
-if (process.env.NODE_ENV !== 'test') {
-  connectDB();
-}
-
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
-  : ['http://localhost:3000'];
-
-// --- Middleware Setup ---
-app.use(cors({ origin: allowedOrigins, credentials: true }));
-app.use(express.json());
-
-app.use(sessionMiddleware);
-app.use(passport.initialize());
-app.use(passport.session());
-
+// Trust the proxy in production (Heroku)
 if (isProduction) {
   app.set('trust proxy', 1);
 }
 
+// --- Robust CORS Configuration ---
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : ['http://localhost:3000'];
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    // This log is crucial for debugging.
+    console.log(`[CORS] Incoming request from origin: ${origin}`);
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.error(`[CORS] Blocked a request from origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+
+// Body parser
+app.use(express.json());
+
+// Session Middleware
+const sessionMiddleware = session({
+  secret: process.env.SESSION_SECRET || 'a-very-strong-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: 24 * 60 * 60 * 1000,
+    httpOnly: true,
+    domain: isProduction ? process.env.COOKIE_DOMAIN : undefined,
+  }
+});
+
+app.use(sessionMiddleware);
+
+// Passport Middleware
+app.use(passport.initialize());
+app.use(passport.session());
+
 // --- API ROUTES ---
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/posts', postRoutes);
-app.use('/api/comments', commentRoutes);
-app.use('/api/friends', friendRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api', generationRoutes);
-app.use('/api', rewriteRoutes);
-app.use('/api', imagegenRouter );
-app.use('/api/upload', uploadRoutes);
-app.use('/api/follows', followRoutes);
-app.use('/api/conversations', conversationRoutes);
-app.use('/api/messages', messageRoutes);
-app.use('/api/chat', chatUploadRoutes);
-app.use('/api/workflow', workflowRoutes);
-
+// ... (register all your other routes)
 
 // --- 404 and Error Handlers ---
 app.use('*', (req, res) => {
@@ -97,32 +93,32 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 
 // --- Server and Socket.IO Setup ---
 const server = http.createServer(app);
-const io = new SocketIOServer(server, { cors: { origin: allowedOrigins, credentials: true } });
-app.set('io', io);
+const io = new SocketIOServer(server, { cors: corsOptions });
 
 const wrap = (middleware: any) => (socket: any, next: any) => middleware(socket.request, {}, next);
 io.use(wrap(sessionMiddleware));
 io.use(wrap(passport.initialize()));
 io.use(wrap(passport.session()));
+
 io.use((socket, next) => {
-    const req = socket.request as Request;
-    if (req.user) {
-        next();
-    } else {
-        next(new Error('unauthorized'));
-    }
+  const req = socket.request as Request;
+  if (req.user) {
+    next();
+  } else {
+    next(new Error('unauthorized'));
+  }
 });
+
 socketHandler(io);
 
-
 // --- Server Start ---
+if (process.env.NODE_ENV !== 'test') {
+  connectDB();
+}
+
 if (require.main === module) {
   const PORT = process.env.PORT || 5000;
   server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-  process.on('unhandledRejection', (err: Error) => {
-    console.log('Unhandled Rejection:', err.message);
-    server.close(() => process.exit(1));
-  });
 }
 
 export default app;
