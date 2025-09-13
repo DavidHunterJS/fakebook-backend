@@ -1,10 +1,63 @@
 // src/routes/auth.routes.ts
-import express, { Router } from 'express';
+import express, { Request, Response, Router } from 'express';
 import { body } from 'express-validator';
 import * as authController from '../controllers/auth.controller';
 import authMiddleware from '../middlewares/auth.middleware';
+import User from '../models/User';
+import crypto from 'crypto';
+import MagicToken from '../models/MagicLink';
+import { sendMagicLinkEmail } from '../config/email';
+import jwt from 'jsonwebtoken';
+import { IAuthPayload } from '../types/user.types';
+
+
 
 const router: Router = express.Router();
+
+router.post('/magic-link', async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    console.log('Creating magic link for:', email);
+    
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    
+    console.log('Generated token:', token);
+    console.log('Expires at:', expiresAt);
+    
+    // Delete existing tokens
+    const deletedCount = await MagicToken.deleteMany({ email: email.toLowerCase() });
+    console.log('Deleted old tokens:', deletedCount.deletedCount);
+
+    // Create new token
+    const savedToken = await MagicToken.create({
+      email: email.toLowerCase(),
+      token,
+      expiresAt
+    });
+    
+    console.log('Saved token to database:', {
+      id: savedToken._id,
+      email: savedToken.email,
+      token: savedToken.token.substring(0, 10) + '...',
+      expiresAt: savedToken.expiresAt
+    });
+
+    await sendMagicLinkEmail(email, token);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Magic link creation error:', error);
+    res.status(500).json({ error: 'Failed to send magic link' });
+  }
+});
+
+/**
+ * @route   GET /api/auth/verify
+ * @desc    Verifies a magic link token and logs the user in.
+ * @access  Public
+ */
+router.get('/verify', authController.verifyMagicLink);
+
 
 /**
  * @route   POST api/auth/register
@@ -79,12 +132,106 @@ router.post(
 );
 
 /**
+ * @route GET api/auth/current
+ * @desc Get current authenticated user (handles both JWT and Session, returns null if not authenticated)
+ * @access Public (but returns user data only if authenticated)
+ */
+router.get('/current', async (req: Request, res: Response) => {
+  try {
+    let authenticatedUser = null;
+
+    // Method 1: Check for session-based authentication (OAuth, Magic Link)
+    if (req.isAuthenticated && req.isAuthenticated() && req.user) {
+      authenticatedUser = await User.findById((req.user as any)._id).select('-password');
+    }
+    
+    // Method 2: Check session userId (for magic links)
+    else if ((req.session as any)?.userId) {
+      authenticatedUser = await User.findById((req.session as any).userId).select('-password');
+    }
+    
+    // Method 3: Check for JWT token authentication
+    else {
+      const token = extractTokenFromRequest(req);
+      if (token) {
+        const user = await authenticateWithJWT(token);
+        if (user) {
+          authenticatedUser = user;
+        }
+      }
+    }
+
+    // Update last active time for authenticated user
+    if (authenticatedUser && authenticatedUser.isActive) {
+      authenticatedUser.lastActive = new Date();
+      await authenticatedUser.save();
+    }
+
+    // Always return consistent format
+    res.json({ user: authenticatedUser });
+
+  } catch (error) {
+    console.error('Error in /current route:', error);
+    res.json({ user: null });
+  }
+});
+
+// Helper function to extract token from request headers
+const extractTokenFromRequest = (req: Request): string | null => {
+  const authHeader = req.header('authorization');
+  let token = req.header('x-auth-token');
+
+  if (!token && authHeader) {
+    if (authHeader.startsWith('Bearer ')) {
+      token = authHeader.slice(7).trim();
+    } else {
+      token = authHeader.trim();
+    }
+  }
+
+  return token || null;
+};
+
+// Helper function to authenticate with JWT
+const authenticateWithJWT = async (token: string): Promise<any | null> => {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    console.error('JWT_SECRET not configured');
+    return null;
+  }
+
+  try {
+    const decoded = jwt.verify(token, jwtSecret) as IAuthPayload;
+    
+    if (decoded.user && decoded.user.id) {
+      const user = await User.findById(decoded.user.id).select('-password');
+      return user && user.isActive ? user : null;
+    }
+  } catch (jwtError) {
+    console.log('Invalid JWT token in /current request:', jwtError instanceof Error ? jwtError.message : 'Unknown error');
+  }
+
+  return null;
+};
+
+
+/**
  * @route   GET api/auth/me
  * @desc    Get current user
  * @access  Private
  */
-router.get('/me', authMiddleware, authController.getMe);
-
+router.get('/me', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    if (req.user) {
+      res.json({ user: req.user });
+    } else {
+      res.status(401).json({ message: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error in /me route:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 /**
  * @route   PUT api/auth/password
  * @desc    Change password
@@ -160,22 +307,9 @@ router.get('/verify/:token', authController.verifyEmail);
  */
 router.post('/resend-verification', authMiddleware, authController.resendVerification);
 
-/**
- * @route   POST api/auth/oauth/google
- * @desc    Authenticate with Google
- * @access  Public
- */
-router.post('/oauth/google', authController.googleAuth);
 
 /**
- * @route   POST api/auth/oauth/facebook
- * @desc    Authenticate with Facebook
- * @access  Public
- */
-router.post('/oauth/facebook', authController.facebookAuth);
-
-/**
- * @route   POST api/auth/logout
+ * @route   GET api/auth/logout
  * @desc    Logout user (useful for tracking session state on server)
  * @access  Private
  */

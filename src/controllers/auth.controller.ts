@@ -1,5 +1,5 @@
 // src/controllers/auth.controller.ts
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { validationResult } from 'express-validator';
 import crypto from 'crypto';
@@ -8,6 +8,7 @@ import { OAuth2Client } from 'google-auth-library';
 import axios from 'axios';
 import User from '../models/User';
 import Post from '../models/Post';
+import MagicToken from '../models/MagicLink'
 import Comment from '../models/Comment';
 import { IUser, IAuthPayload } from '../types/user.types';
 import dotenv from 'dotenv';
@@ -45,6 +46,67 @@ const generateToken = (user: IUser): string => {
   };
 
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+};
+
+
+/**
+ * @desc    Verifies a magic link token, logs the user in, and creates a session.
+ * @route   GET /api/auth/verify
+ * @access  Public
+ */
+export const verifyMagicLink = async (req: Request, res: Response, next: NextFunction) => {
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  try {
+    const { token } = req.query;
+    if (!token || typeof token !== 'string') {
+      return res.redirect(`${frontendUrl}/login?error=invalid_token`);
+    }
+
+    const magicToken = await MagicToken.findOne({
+      token: token,
+      expiresAt: { $gt: new Date() }
+    });
+
+    if (!magicToken) {
+      return res.redirect(`${frontendUrl}/login?error=link_expired`);
+    }
+
+    // Handle email security scanners by allowing a grace period.
+    if (magicToken.used) {
+      const timeSinceUsed = Date.now() - (magicToken.updatedAt?.getTime() || 0);
+      if (timeSinceUsed > 15000) { // 15-second grace period
+        return res.redirect(`${frontendUrl}/login?error=link_expired`);
+      }
+    }
+    
+    magicToken.used = true;
+    await magicToken.save();
+
+    let user = await User.findOne({ email: magicToken.email });
+    if (!user) {
+      const username = magicToken.email.split('@')[0] + '_' + Date.now();
+      user = await User.create({
+        email: magicToken.email,
+        username,
+        firstName: 'New',
+        lastName: 'User',
+        isEmailVerified: true,
+      });
+    }
+
+    // Use Passport's req.login() to establish a session
+    req.login(user, (err) => {
+      if (err) {
+        return next(err);
+      }
+      console.log(`Session created successfully for user: ${user.email}`);
+      return res.redirect(`${frontendUrl}/dashboard`);
+    });
+
+  } catch (error) {
+    console.error('Magic link verification error:', error);
+    return res.redirect(`${frontendUrl}/login?error=server_error`);
+  }
 };
 
 
@@ -104,7 +166,7 @@ export const register = async (req: Request, res: Response): Promise<Response> =
     });
 
     // Generate token
-    const token = generateToken(user);
+    const token = generateToken(user.toObject());
     
     return res.status(201).json({ 
       token,
@@ -130,55 +192,66 @@ export const register = async (req: Request, res: Response): Promise<Response> =
  * @desc    Authenticate user & get token
  * @access  Public
  */
-export const login = async (req: Request, res: Response): Promise<Response> => {
+export const login = async (req: Request, res: Response): Promise<void> => { // Changed return type
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { email, password } = req.body;
-
-    // Check if user exists
     const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+
+    const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        res.status(400).json({ errors: errors.array() });
+        return;
     }
 
-    // Check if password matches
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+    if (!user || !(await user.comparePassword(password))) {
+      res.status(401).json({ message: 'Invalid credentials' });
+      return;
     }
 
-    // Check if user is active
     if (!user.isActive) {
-      return res.status(403).json({ message: 'This account has been deactivated' });
+      res.status(403).json({ message: 'This account has been deactivated' });
+      return;
     }
 
-    // Update last login timestamp
-    user.lastActive = new Date();
-    await user.save();
-
-    // Generate token
-    const token = generateToken(user);
-    
-    return res.json({ 
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified
+    // ❗️ THIS IS THE KEY CHANGE ❗️
+    // Instead of generating a token, establish a session.
+    req.logIn(user, async (err) => {
+      if (err) {
+        console.error('Session login error:', err);
+        return res.status(500).send('Server error during login');
       }
+
+      // Session is established. Now update last active and send response.
+      user.lastActive = new Date();
+      await user.save();
+      
+      // Send back ONLY the user object. No token needed.
+      return res.json({
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          // ... other user fields
+        }
+      });
     });
+
   } catch (err) {
     console.error((err as Error).message);
-    return res.status(500).send('Server error');
+    res.status(500).send('Server error');
   }
+};
+
+/**
+ * @desc    Get the currently authenticated user (works for both JWT and session)
+ * @route   GET /api/auth/current
+ * @access  Private
+ */
+export const getCurrentUser = (req: Request, res: Response) => {
+  // The authMiddleware has already validated the user and attached it to req.user.
+  // If the user wasn't valid, this code would never be reached.
+  // We just need to send back the user data.
+  res.status(200).json({ user: req.user });
 };
 
 /**
@@ -427,177 +500,48 @@ export const resendVerification = async (req: Request, res: Response): Promise<R
   }
 };
 
-/**
- * @route   POST api/auth/oauth/google
- * @desc    Authenticate with Google
- * @access  Public
- */
-export const googleAuth = async (req: Request, res: Response): Promise<Response> => {
-  try {
-    const { idToken } = req.body;
-
-    // Verify Google token
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: GOOGLE_CLIENT_ID
-    });
-
-    const payload = ticket.getPayload();
-    if (!payload || !payload.email) {
-      return res.status(400).json({ message: 'Invalid Google token' });
-    }
-
-    const { email, name, given_name, family_name, picture, sub } = payload;
-    
-    // Check if user exists
-    let user = await User.findOne({ email });
-    
-    if (!user) {
-      // Create new user with Google data
-      const username = `user_${sub.substring(0, 8)}`;
-      
-      user = new User({
-        username,
-        email,
-        firstName: given_name || name?.split(' ')[0] || '',
-        lastName: family_name || name?.split(' ').slice(1).join(' ') || '',
-        profilePicture: picture || 'default-avatar.png',
-        password: crypto.randomBytes(20).toString('hex'), // Random password since they'll use Google to login
-        isEmailVerified: true // Google already verified the email
-      });
-      
-      await user.save();
-    }
-    
-    // Check if user is active
-    if (!user.isActive) {
-      return res.status(403).json({ message: 'This account has been deactivated' });
-    }
-
-    // Update user's last active timestamp
-    user.lastActive = new Date();
-    await user.save();
-
-    // Generate token
-    const token = generateToken(user);
-    
-    return res.json({ 
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        profilePicture: user.profilePicture,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified
-      }
-    });
-  } catch (err) {
-    console.error((err as Error).message);
-    return res.status(500).send('Server error');
-  }
-};
 
 /**
- * @route   POST api/auth/oauth/facebook
- * @desc    Authenticate with Facebook
- * @access  Public
- */
-export const facebookAuth = async (req: Request, res: Response): Promise<Response> => {
-  try {
-    const { accessToken, userId } = req.body;
-    
-    // Verify Facebook token
-    const fbResponse = await axios.get(
-      `https://graph.facebook.com/v13.0/${userId}`,
-      {
-        params: {
-          fields: 'id,email,first_name,last_name,picture',
-          access_token: accessToken
-        }
-      }
-    );
-    
-    if (!fbResponse.data || !fbResponse.data.email) {
-      return res.status(400).json({ message: 'Invalid Facebook data' });
-    }
-    
-    const { email, first_name, last_name, id, picture } = fbResponse.data;
-    
-    // Check if user exists
-    let user = await User.findOne({ email });
-    
-    if (!user) {
-      // Create new user with Facebook data
-      const username = `user_${id.substring(0, 8)}`;
-      
-      user = new User({
-        username,
-        email,
-        firstName: first_name,
-        lastName: last_name,
-        profilePicture: picture?.data?.url || 'default-avatar.png',
-        password: crypto.randomBytes(20).toString('hex'), // Random password since they'll use Facebook to login
-        isEmailVerified: true // Facebook already verified the email
-      });
-      
-      await user.save();
-    }
-    
-    // Check if user is active
-    if (!user.isActive) {
-      return res.status(403).json({ message: 'This account has been deactivated' });
-    }
-
-    // Update user's last active timestamp
-    user.lastActive = new Date();
-    await user.save();
-
-    // Generate token
-    const token = generateToken(user);
-    
-    return res.json({ 
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        profilePicture: user.profilePicture,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified
-      }
-    });
-  } catch (err) {
-    console.error((err as Error).message);
-    return res.status(500).send('Server error');
-  }
-};
-
-/**
- * @route   POST api/auth/logout
- * @desc    Logout user (useful for tracking session state on server)
+ * @desc    Logs out the user, updates their status, and destroys the session.
+ * @route   POST /api/auth/logout
  * @access  Private
  */
-export const logout = async (req: Request, res: Response): Promise<Response> => {
+export const logout = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ message: 'Not authorized' });
+    // 1. Update the user's status in the database.
+    // The authMiddleware ensures `req.user` is available.
+    if (req.user) {
+      await User.findByIdAndUpdate(req.user.id, {
+        lastActive: new Date(),
+        isOnline: false,
+      });
     }
 
-    // Update last active time
-    await User.findByIdAndUpdate(req.user.id, {
-      lastActive: new Date(),
-      isOnline: false
+    // 2. Use Passport's req.logout() to terminate the login session.
+    req.logout((err) => {
+      if (err) {
+        console.error('Error during passport logout:', err);
+        return next(err); // Pass errors to the Express error handler
+      }
+
+      // 3. Destroy the session data on the server.
+      req.session.destroy((err) => {
+        if (err) {
+          console.error('Error destroying session:', err);
+          return res.status(500).json({ message: 'Could not log out completely.' });
+        }
+        
+        // 4. Clear the session cookie from the user's browser.
+        res.clearCookie('connect.sid');
+        
+        // 5. Send a success response.
+        return res.status(200).json({ message: 'Logout successful' });
+      });
     });
 
-    return res.json({ message: 'Logged out successfully' });
-  } catch (err) {
-    console.error((err as Error).message);
-    return res.status(500).send('Server error');
+  } catch (error) {
+    console.error('Server error during logout:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 };
 

@@ -19,7 +19,7 @@ router.get('/reported', auth, isModerator, commentController.getReportedComments
 // Routes with :id parameter (must come after specific routes like /reported)
 router.get('/:id', commentController.getCommentById);
 router.put('/:id', auth, commentController.updateComment);
-router.delete('/:id', auth, commentController.deleteComment);
+router.delete('/:id', auth, commentController.deleteComment as express.RequestHandler);
 
 // Like/unlike comment
 router.put('/:id/like', auth, commentController.toggleLikeComment);

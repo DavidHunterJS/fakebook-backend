@@ -1,12 +1,10 @@
 // types/socket.ts
 
-import {EncryptedMessage, SignedPrekey} from './signal.types'
 
 export interface ServerToClientEvents {
   message_received: (data: {
     chatId: string;
     senderId: string;
-    encryptedPayload: EncryptedMessage;
     timestamp: Date;
     messageId: string;
   }) => void;
@@ -24,7 +22,6 @@ export interface ClientToServerEvents {
   send_message: (data: {
     chatId: string;
     recipientId: string;
-    encryptedPayload: EncryptedMessage;
     tempId: string; // for optimistic UI
   }) => void;
   
@@ -36,7 +33,6 @@ export interface ClientToServerEvents {
   
   request_prekey_bundle: (userId: string) => void;
   upload_prekeys: (prekeys: Array<{id: number; publicKey: string}>) => void;
-  rotate_signed_prekey: (newPrekey: SignedPrekey) => void;
 }
 
 export interface InterServerEvents {

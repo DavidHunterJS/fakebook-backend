@@ -8,7 +8,7 @@ import Reaction from '../models/Reaction'; // Import the Reaction model
 
 describe('Notification API Endpoints', () => {
   // --- Test Suite Setup ---
-  let tokenA: string, tokenB: string;
+  let agentA: any, agentB: any;
   let userAId: string, userBId: string;
   let postAId: string;
 
@@ -18,6 +18,10 @@ describe('Notification API Endpoints', () => {
     await Notification.deleteMany({});
     await Reaction.deleteMany({}); // Also clean reactions before starting
 
+    // Create agents for session management
+    agentA = request.agent(app);
+    agentB = request.agent(app);
+
     // Create User A (recipient)
     const userAPayload = {
       username: `userA_notif_${Date.now()}`,
@@ -26,10 +30,9 @@ describe('Notification API Endpoints', () => {
       firstName: 'User',
       lastName: 'A',
     };
-    const registerResA = await request(app).post('/api/auth/register').send(userAPayload);
+    const registerResA = await agentA.post('/api/auth/register').send(userAPayload);
     await User.updateOne({ email: userAPayload.email }, { $set: { isEmailVerified: true } });
-    const loginARes = await request(app).post('/api/auth/login').send({ email: userAPayload.email, password: userAPayload.password });
-    tokenA = loginARes.body.token;
+    const loginARes = await agentA.post('/api/auth/login').send({ email: userAPayload.email, password: userAPayload.password });
     userAId = loginARes.body.user.id;
 
     // Create User B (sender)
@@ -40,16 +43,14 @@ describe('Notification API Endpoints', () => {
       firstName: 'User',
       lastName: 'B',
     };
-    const registerResB = await request(app).post('/api/auth/register').send(userBPayload);
+    const registerResB = await agentB.post('/api/auth/register').send(userBPayload);
     await User.updateOne({ email: userBPayload.email }, { $set: { isEmailVerified: true } });
-    const loginBRes = await request(app).post('/api/auth/login').send({ email: userBPayload.email, password: userBPayload.password });
-    tokenB = loginBRes.body.token;
+    const loginBRes = await agentB.post('/api/auth/login').send({ email: userBPayload.email, password: userBPayload.password });
     userBId = loginBRes.body.user.id;
 
-    // User A creates a post
-    const postRes = await request(app)
+    // User A creates a post using session
+    const postRes = await agentA
       .post('/api/posts')
-      .set('Authorization', `Bearer ${tokenA}`)
       .send({ text: 'A post for notification testing' });
     postAId = postRes.body.post._id;
   });
@@ -69,25 +70,20 @@ describe('Notification API Endpoints', () => {
 
   describe('GET /api/notifications', () => {
     it('should return an empty array if the user has no notifications', async () => {
-      const response = await request(app)
-        .get('/api/notifications')
-        .set('Authorization', `Bearer ${tokenA}`);
+      const response = await agentA.get('/api/notifications');
       expect(response.statusCode).toBe(200);
       expect(response.body.notifications).toEqual([]);
     });
 
     it('should return notifications intended for the authenticated user', async () => {
-      // Action: User B reacts to User A's post
-      const likeResponse = await request(app)
+      // Action: User B reacts to User A's post using session
+      const likeResponse = await agentB
         .post(`/api/posts/${postAId}/reactions`)
-        .set('Authorization', `Bearer ${tokenB}`)
         .send({ type: 'love' });
       expect([200, 201]).toContain(likeResponse.statusCode);
 
-      // Test: Fetch notifications for User A
-      const response = await request(app)
-        .get('/api/notifications')
-        .set('Authorization', `Bearer ${tokenA}`);
+      // Test: Fetch notifications for User A using session
+      const response = await agentA.get('/api/notifications');
       
       expect(response.statusCode).toBe(200);
       expect(response.body.notifications).toHaveLength(1);
@@ -109,9 +105,7 @@ describe('Notification API Endpoints', () => {
         { recipient: userAId, sender: userBId, type: 'post_comment', read: true, content: '...', link: '...' },
       ]);
 
-      const response = await request(app)
-        .get('/api/notifications/unread-count')
-        .set('Authorization', `Bearer ${tokenA}`);
+      const response = await agentA.get('/api/notifications/unread-count');
 
       expect(response.statusCode).toBe(200);
       expect(response.body.count).toBe(2);
@@ -128,9 +122,7 @@ describe('Notification API Endpoints', () => {
         link: `/posts/${postAId}`
       });
       
-      const response = await request(app)
-        .put(`/api/notifications/${notif._id}/read`)
-        .set('Authorization', `Bearer ${tokenA}`);
+      const response = await agentA.put(`/api/notifications/${notif._id}/read`);
       
       expect(response.statusCode).toBe(200);
       const updatedNotif = await Notification.findById(notif._id);
@@ -146,9 +138,7 @@ describe('Notification API Endpoints', () => {
         link: `/posts/${postAId}`
       });
       
-      const response = await request(app)
-        .put(`/api/notifications/${notifForUserB._id}/read`)
-        .set('Authorization', `Bearer ${tokenA}`);
+      const response = await agentA.put(`/api/notifications/${notifForUserB._id}/read`);
       
       expect(response.statusCode).toBe(404);
     });
@@ -162,9 +152,7 @@ describe('Notification API Endpoints', () => {
         { recipient: userBId, sender: userAId, type: 'friend_request', content: '...', link: '...' },
       ]);
       
-      const response = await request(app)
-        .put('/api/notifications/read-all')
-        .set('Authorization', `Bearer ${tokenA}`);
+      const response = await agentA.put('/api/notifications/read-all');
       
       expect(response.statusCode).toBe(200);
       const unreadCount = await Notification.countDocuments({ recipient: userAId, read: false });
@@ -182,9 +170,7 @@ describe('Notification API Endpoints', () => {
         link: `/posts/${postAId}`
       });
 
-      const response = await request(app)
-        .delete(`/api/notifications/${notif._id}`)
-        .set('Authorization', `Bearer ${tokenA}`);
+      const response = await agentA.delete(`/api/notifications/${notif._id}`);
 
       expect(response.statusCode).toBe(200);
       const deletedNotif = await Notification.findById(notif._id);
@@ -200,9 +186,7 @@ describe('Notification API Endpoints', () => {
         link: `/posts/${postAId}`
       });
 
-      const response = await request(app)
-        .delete(`/api/notifications/${notifForUserB._id}`)
-        .set('Authorization', `Bearer ${tokenA}`);
+      const response = await agentA.delete(`/api/notifications/${notifForUserB._id}`);
 
       expect(response.statusCode).toBe(404);
     });

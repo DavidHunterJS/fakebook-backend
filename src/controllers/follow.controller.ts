@@ -3,14 +3,14 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { Follow } from '../models/Follow';
 import User from '../models/User';
-import { AuthenticatedRequest } from '../types/request.types';
+import { AuthenticatedS3Request } from '../types/request.types';
 
 export class FollowController {
   
   /**
    * Follow a user
    */
-  static async followUser(req: AuthenticatedRequest, res: Response): Promise<void> {
+  static async followUser(req: AuthenticatedS3Request, res: Response): Promise<void> {
     const session = await mongoose.startSession();
     
     try {
@@ -104,7 +104,7 @@ export class FollowController {
   /**
    * Unfollow a user
    */
-  static async unfollowUser(req: AuthenticatedRequest, res: Response): Promise<void> {
+  static async unfollowUser(req: AuthenticatedS3Request, res: Response): Promise<void> {
     const session = await mongoose.startSession();
     
     try {
@@ -253,7 +253,7 @@ export class FollowController {
   /**
    * Check if current user is following another user
    */
-  static async checkFollowStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
+  static async checkFollowStatus(req: AuthenticatedS3Request, res: Response): Promise<void> {
     try {
       const { userId } = req.params;
       const currentUserId = req.user?.id;
@@ -285,7 +285,7 @@ export class FollowController {
   /**
    * Get mutual followers (users that both follow each other)
    */
-  static async getMutualFollows(req: AuthenticatedRequest, res: Response): Promise<void> {
+  static async getMutualFollows(req: AuthenticatedS3Request, res: Response): Promise<void> {
     try {
       const { userId } = req.params;
       const currentUserId = req.user?.id;
@@ -325,7 +325,7 @@ export class FollowController {
   /**
    * Get suggested users to follow
    */
-  static async getSuggestedUsers(req: AuthenticatedRequest, res: Response): Promise<void> {
+  static async getSuggestedUsers(req: AuthenticatedS3Request, res: Response): Promise<void> {
     try {
       const currentUserId = req.user?.id;
       const limit = parseInt(req.query.limit as string) || 10;

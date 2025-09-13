@@ -199,12 +199,58 @@ const chatFileUpload = async (req: Request, res: Response, next: NextFunction) =
     }
   });
 };
+
+
+const workflowImageUpload = async (req: Request, res: Response, next: NextFunction) => {
+  memoryUpload.single('image')(req, res, async (err: any) => {
+    if (err) {
+      const message = err instanceof multer.MulterError ? err.message : "Internal server error during file upload.";
+      return res.status(400).json({ message });
+    }
+    
+    try {
+      if (req.file) {
+        // Validate file type for workflow images
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+        if (!allowedTypes.includes(req.file.mimetype)) {
+          return res.status(400).json({ 
+            message: 'Invalid file type. Please upload JPEG, PNG, or WebP images only.' 
+          });
+        }
+
+        // Validate file size (max 10MB for workflow processing)
+        if (req.file.size > 10 * 1024 * 1024) {
+          return res.status(400).json({ 
+            message: 'File too large. Maximum size is 10MB.' 
+          });
+        }
+
+        // Upload to workflow folder in S3
+        const key = await uploadToS3(req.file, 'workflow-uploads');
+        
+        // Add S3 information to request (mimicking MulterS3 format)
+        (req as any).file = {
+          ...req.file,
+          key: key,
+          location: getFileUrl(key),
+          bucket: bucketName
+        };
+      }
+      next();
+    } catch (error) {
+      console.error('Workflow image upload error:', error);
+      return res.status(500).json({ message: "Failed to upload workflow image to S3" });
+    }
+  });
+};
+
 // --- ✅ 9. UPDATED Exported Middleware ---
 const s3UploadMiddleware = {
   profilePicture: profilePictureUpload,
   coverPhoto: coverPhotoUpload,
   postMedia: postMediaUpload,
-  chatFile: chatFileUpload, // ADD THIS LINE
+  chatFile: chatFileUpload,
+  workflowImage: workflowImageUpload,
   deleteFile: deleteFile,
   getFileUrl: getFileUrl,
   uploadToS3: uploadToS3,

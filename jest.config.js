@@ -1,14 +1,14 @@
 // jest.config.js
 module.exports = {
-  // 'dotenv/config' should be sufficient here to load from .env files during local development.
-  // For CI, Jenkins will set process.env directly.
-  setupFiles: ['dotenv/config'],
+  // Load environment variables first, before anything else
+  setupFiles: [
+    'dotenv/config',
+    '<rootDir>/src/__tests__/jest.setup.js'  // Create this new file
+  ],
   preset: 'ts-jest',
   testEnvironment: 'node',
-  setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts'],
-  
+  setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts'], // Keep your existing setup
   modulePathIgnorePatterns: ['<rootDir>/dist/'],
-
   testMatch: [
     '**/__tests__/**/*.test.ts',
     '**/?(*.)+(test).ts'

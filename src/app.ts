@@ -1,4 +1,3 @@
-// src/server.ts
 import express, { Request, Response, NextFunction } from 'express';
 import connectDB from './config/db';
 import cors from 'cors';
@@ -7,8 +6,13 @@ import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
 import socketHandler from './sockets/socket';
+import session from 'express-session';
+import passport from './config/passport';
+import Redis from 'redis';
+import ConnectRedis from 'connect-redis';
+import { createClient } from 'redis';
 
-// Import routes
+// Import all your route files
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
 import postRoutes from './routes/post.routes';
@@ -19,57 +23,84 @@ import adminRoutes from './routes/admin.routes';
 import generationRoutes from './routes/generation.routes';
 import rewriteRoutes from './routes/rewrite.routes';
 import imagegenRouter from './routes/genimgage.routes';
-import uploadRoutes from './routes/upload.routes'
+import uploadRoutes from './routes/upload.routes';
 import followRoutes from './routes/follow.routes';
 import conversationRoutes from './routes/conversation.routes';
 import messageRoutes from './routes/message.routes';
 import chatUploadRoutes from './routes/chatUploads.routes';
+import workflowRoutes from './routes/workflow.routes';
 
-
-// Load env vars
 dotenv.config();
 
-// Initialize express
 const app = express();
+const isProduction = process.env.NODE_ENV === 'production';
 
-// Support multiple origins
+if (isProduction) {
+  app.set('trust proxy', 1);
+}
+
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
   : ['http://localhost:3000'];
 
-console.log('Allowed Origins:', allowedOrigins);
+const corsOptions: cors.CorsOptions = {
+  origin: allowedOrigins,
+  credentials: true,
+};
 
-// Connect to Database (only if not in test environment)
-if (process.env.NODE_ENV !== 'test') {
-  connectDB();
+app.use(cors(corsOptions));
+app.use(express.json());
+
+let redisClient;
+let RedisStore;
+
+if (isProduction && process.env.REDIS_URL) {
+  try {
+    const redis = require('redis');
+    const connectRedis = require('connect-redis');
+    
+    redisClient = redis.createClient({
+      url: process.env.REDIS_URL,
+      socket: {
+        connectTimeout: 5000,
+        lazyConnect: true
+      }
+    });
+    
+    RedisStore = connectRedis.default ? connectRedis.default(session) : connectRedis(session);
+    
+    redisClient.connect().catch((err: any) => {
+      console.error('Redis connection failed:', err);
+      redisClient = null;
+      RedisStore = null;
+    });
+    
+  } catch (error: any) {
+    console.error('Redis setup failed:', error);
+    redisClient = null;
+    RedisStore = null;
+  }
 }
 
-// Init Middleware
-app.use(express.json());
-app.use(cors({
-  origin: allowedOrigins,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  credentials: true
-}));
-
-// --- Static File Serving ---
-const staticUploadsPath = path.join(__dirname, '../uploads');
-console.log('Express will serve static files for /uploads from absolute path:', staticUploadsPath);
-app.use('/uploads', express.static(staticUploadsPath));
-// ---------------------------
-
-// --- Add this health check route ---
-app.get('/health', (req: Request, res: Response) => {
-  res.status(200).send('OK');
-});
-// ------------------------------------
-
-// Root route handler
-app.get('/', (req: Request, res: Response) => {
-  res.json({ message: 'Fakebook API is running' });
+const sessionMiddleware = session({
+  store: (redisClient && RedisStore) ? new RedisStore({ client: redisClient }) : undefined,
+  secret: process.env.SESSION_SECRET || 'a-very-strong-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: 24 * 60 * 60 * 1000,
+    httpOnly: true,
+    domain: isProduction ? process.env.COOKIE_DOMAIN : undefined,
+  }
 });
 
-// Define API Routes
+app.use(sessionMiddleware);
+app.use(passport.initialize());
+app.use(passport.session());
+
+// --- API ROUTES ---
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);
@@ -79,59 +110,62 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', generationRoutes);
 app.use('/api', rewriteRoutes);
-app.use('/api', imagegenRouter );
+app.use('/api', imagegenRouter);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/follows', followRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/chat', chatUploadRoutes);
+app.use('/api/workflow', workflowRoutes);
 
-// Catch-all route handler (must be placed after all other routes)
-app.use('*', (req: Request, res: Response) => {
-  res.status(404).json({
-    message: 'Route not found',
-    path: req.originalUrl
-  });
+// --- 404 and Error Handlers ---
+app.use('*', (req, res) => {
+  res.status(404).json({ message: 'Route not found', path: req.originalUrl });
 });
 
-// Error handler - Should typically be defined AFTER all routes
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error(err.stack);
-  if (req.originalUrl.startsWith('/api/')) {
-    return res.status(500).json({ message: 'Server Error', error: err.message });
-  }
-  res.status(500).send('Server Error');
+  res.status(500).json({ message: 'Server Error', error: err.message });
 });
 
-// Create server and Socket.IO setup
+// --- Server and Socket.IO Setup ---
 const server = http.createServer(app);
+
+// ✅ --- THIS IS THE FINAL FIX ---
 const io = new SocketIOServer(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ['GET', 'POST'],
-    credentials: true
+  cors: corsOptions,
+  // This explicitly tells Socket.IO to use the same paths as a standard Express app,
+  // which is required for compatibility with Heroku's router.
+  path: '/socket.io/',
+});
+// --- END OF FIX ---
+
+const wrap = (middleware: any) => (socket: any, next: any) => middleware(socket.request, {}, next);
+io.use(wrap(sessionMiddleware));
+io.use(wrap(passport.initialize()));
+io.use(wrap(passport.session()));
+
+io.use((socket, next) => {
+  const req = socket.request as any;
+  if (req.user) {
+    next();
+  } else {
+    console.error('[SOCKET AUTH] Authentication FAILED: No user on request object.');
+    next(new Error('unauthorized'));
   }
 });
-app.set('io', io);
-// Socket.io connection
+
 socketHandler(io);
 
-// Only start server if this file is run directly (not imported)
-if (require.main === module) {
-  const PORT = process.env.PORT || 5000;
-  
-  server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log('Confirmed static /uploads serving from:', staticUploadsPath);
-  });
-
-  // Handle unhandled promise rejections
-  process.on('unhandledRejection', (err: Error) => {
-    console.log('Unhandled Rejection:', err.message);
-    server.close(() => process.exit(1));
-  });
+// --- Server Start ---
+if (process.env.NODE_ENV !== 'test') {
+  connectDB();
 }
 
-// Export for testing
-export { app, server, io };
+if (require.main === module) {
+  const PORT = process.env.PORT || 5000;
+  server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
 export default app;
+

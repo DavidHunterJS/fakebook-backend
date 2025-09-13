@@ -1,6 +1,6 @@
 // src/__tests__/auth.test.ts
 import request from 'supertest';
-import { app } from '../app'; // Updated import path
+import app  from '../app'; // Updated import path
 // Import your User model for database verification (optional)
 // import User from '../models/User';
 
@@ -34,10 +34,9 @@ describe('POST /api/auth/register - User Registration', () => {
       .post('/api/auth/register')
       .send(validUserData);
 
-    // Based on your JWT response structure
+    // Session-based registration - no JWT token expected
     expect(response.statusCode).toBe(201);
     expect(response.body).toHaveProperty('message', 'Registration successful. Please check your email to verify your account.');
-    expect(response.body).toHaveProperty('token');
     expect(response.body).toHaveProperty('user');
     
     // Verify user object structure
@@ -50,11 +49,8 @@ describe('POST /api/auth/register - User Registration', () => {
     expect(response.body.user).toHaveProperty('isEmailVerified', false);
     expect(response.body.user).not.toHaveProperty('password');
 
-    // Optional: Verify JWT token structure
-    const tokenPayload = JSON.parse(Buffer.from(response.body.token.split('.')[1], 'base64').toString());
-    expect(tokenPayload).toHaveProperty('user');
-    expect(tokenPayload.user).toHaveProperty('id');
-    expect(tokenPayload.user).toHaveProperty('role', 'user');
+    // No JWT token validation needed for session-based auth
+    // Registration should create a session but not require token parsing
 
     // Optional: Verify in database
     // const userInDb = await User.findOne({ email: validUserData.email });

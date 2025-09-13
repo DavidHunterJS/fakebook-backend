@@ -10,7 +10,7 @@ import Comment from '../models/Comment';
 import { Permission } from '../config/roles';
 import { NotificationService } from '../services/notification.service';
 import { IUser } from '../types/user.types';
-import { AuthenticatedRequest } from '../types/request.types';
+import { AuthenticatedS3Request } from '../types/request.types';
 import s3UploadMiddleware from '../middlewares/s3-upload.middleware';
 import Reaction, { ReactionType, REACTION_TYPES } from '../models/Reaction';
 
@@ -360,7 +360,7 @@ export const getPostById = async (
 ): Promise<Response> => {
   try {
     // 1. Assert custom request type to safely access 'user'
-    const user = (req as unknown as AuthenticatedRequest).user;
+    const user = (req as unknown as AuthenticatedS3Request).user;
     if (!user) {
       return res.status(401).json({ message: 'Not authorized' });
     }
@@ -444,7 +444,7 @@ export const updatePost = async (
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const user = (req as unknown as AuthenticatedRequest).user;
+    const user = (req as unknown as AuthenticatedS3Request).user;
     const files = req.files as Express.Multer.File[]; // Standard multer files
     const s3Keys = (req as any).s3Keys as string[]; // Your S3 keys
     const s3Urls = (req as any).s3Urls as string[]; // Your S3 URLs

@@ -4,14 +4,14 @@ import mongoose from 'mongoose';
 import Post from '../models/Post';
 import Reaction from '../models/Reaction';
 import Notification from '../models/Notification'; // Import the Notification model
-import { AuthenticatedRequest } from '../types/request.types';
+import { AuthenticatedS3Request } from '../types/request.types';
 import { ReactionType } from '../models/Reaction'; // Assuming ReactionType is defined here
 
 // --- FIX: Add the missing type definition for ReactionCounts ---
 type ReactionCounts = Record<ReactionType, number>;
 
 const reactionController = {
-  addOrUpdateReaction: async (req: AuthenticatedRequest, res: Response) => {
+  addOrUpdateReaction: async (req: AuthenticatedS3Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
@@ -72,7 +72,7 @@ const reactionController = {
     }
   },
 
-  removeReaction: async (req: AuthenticatedRequest, res: Response) => {
+  removeReaction: async (req: AuthenticatedS3Request, res: Response) => {
     if (!req.user?.id) {
       return res.status(401).json({ msg: 'User not authenticated. Access denied.' });
     }
@@ -106,7 +106,7 @@ const reactionController = {
   },
 };
 
-export const getReactions = async (req: AuthenticatedRequest, res: Response) => {
+export const getReactions = async (req: AuthenticatedS3Request, res: Response) => {
   try {
     const { id: postId } = req.params;
     const userId = req.user?.id;
