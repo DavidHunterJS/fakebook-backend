@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import socketHandler from './sockets/socket';
 import session from 'express-session';
 import passport from './config/passport';
+import Redis from 'redis';
 import ConnectRedis from 'connect-redis';
 import { createClient } from 'redis';
 
@@ -50,25 +51,22 @@ const corsOptions: cors.CorsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-const redisClient = createClient({
-  url: process.env.REDIS_URL
-});
+let redisClient;
+let RedisStore;
 
-redisClient.on('error', (err) => {
-  console.error('Redis Client Error:', err);
-});
-
-redisClient.on('connect', () => {
-  console.log('Redis connected');
-});
-
-redisClient.connect().catch(console.error);
-
-const RedisStore = ConnectRedis(session);
+if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
+  const Redis = require('redis');
+  const connectRedis = require('connect-redis');
+  
+  RedisStore = connectRedis(session);
+  redisClient = Redis.createClient({
+    url: process.env.REDIS_URL
+  });
+  redisClient.connect().catch(console.error);
+}
 
 const sessionMiddleware = session({
-  store: new RedisStore({ client: redisClient }),
-  secret: process.env.SESSION_SECRET || 'a-very-strong-secret',
+store: redisClient && RedisStore ? new RedisStore({ client: redisClient }) : undefined,  secret: process.env.SESSION_SECRET || 'a-very-strong-secret',
   resave: false,
   saveUninitialized: false,
   cookie: {
