@@ -54,19 +54,36 @@ app.use(express.json());
 let redisClient;
 let RedisStore;
 
-if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
-  const redis = require('redis');
-  const connectRedis = require('connect-redis');
-
-  RedisStore = connectRedis(session);
-  redisClient = Redis.createClient({
-    url: process.env.REDIS_URL
-  });
-  redisClient.connect().catch(console.error);
+if (isProduction && process.env.REDIS_URL) {
+  try {
+    const redis = require('redis');
+    const connectRedis = require('connect-redis');
+    
+    redisClient = redis.createClient({
+      url: process.env.REDIS_URL,
+      socket: {
+        connectTimeout: 5000,
+        lazyConnect: true
+      }
+    });
+    
+    RedisStore = connectRedis.default ? connectRedis.default(session) : connectRedis(session);
+    
+    redisClient.connect().catch((err) => {
+      console.error('Redis connection failed:', err);
+      redisClient = null;
+      RedisStore = null;
+    });
+    
+  } catch (error) {
+    console.error('Redis setup failed:', error);
+    redisClient = null;
+    RedisStore = null;
+  }
 }
 
 const sessionMiddleware = session({
-  store: redisClient && RedisStore ? new RedisStore({ client: redisClient }) : undefined,
+  store: (redisClient && RedisStore) ? new RedisStore({ client: redisClient }) : undefined,
   secret: process.env.SESSION_SECRET || 'a-very-strong-secret',
   resave: false,
   saveUninitialized: false,
