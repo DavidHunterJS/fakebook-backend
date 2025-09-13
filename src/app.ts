@@ -8,6 +8,8 @@ import dotenv from 'dotenv';
 import socketHandler from './sockets/socket';
 import session from 'express-session';
 import passport from './config/passport';
+import ConnectRedis from 'connect-redis';
+import { createClient } from 'redis';
 
 // Import all your route files
 import authRoutes from './routes/auth.routes';
@@ -48,7 +50,15 @@ const corsOptions: cors.CorsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+const redisClient = createClient({
+  url: process.env.REDIS_URL
+});
+redisClient.connect().catch(console.error);
+
+const RedisStore = ConnectRedis(session);
+
 const sessionMiddleware = session({
+  store: new RedisStore({ client: redisClient }),
   secret: process.env.SESSION_SECRET || 'a-very-strong-secret',
   resave: false,
   saveUninitialized: false,

@@ -29,6 +29,7 @@
         "aws-sdk": "^2.1692.0",
         "axios": "^1.8.4",
         "bcryptjs": "^2.4.3",
+        "connect-redis": "^9.0.0",
         "cors": "^2.8.5",
         "crypto": "^1.0.1",
         "dotenv-cli": "^8.0.0",
@@ -45,6 +46,7 @@
         "openai": "^5.10.1",
         "passport": "^0.7.0",
         "passport-google-oauth20": "^2.0.0",
+        "redis": "^5.8.2",
         "replicate": "^1.0.1",
         "sharp": "^0.34.3",
         "socket.io": "^4.8.1",
@@ -54,6 +56,7 @@
     "devDependencies": {
         "@types/archiver": "^6.0.3",
         "@types/aws-sdk": "^0.0.42",
+        "@types/connect-redis": "^0.0.23",
         "@types/express-session": "^1.18.2",
         "@types/jest": "^29.5.14",
         "@types/multer": "^1.4.12",
