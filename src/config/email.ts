@@ -37,7 +37,7 @@ export const sendMagicLinkEmail = async (email: string, token: string): Promise<
   const magicLink = `${backendUrl}/api/auth/verify?token=${token}`;
   
   const mailOptions = {
-    from: `"${process.env.EMAIL_FROM_NAME || 'Your App'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
+    from: `"${process.env.EMAIL_FROM_NAME || 'ComplianceKit'}" <${process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER}>`,
     to: email,
     subject: 'Sign in to ComplianceKit.app',
     html: `
