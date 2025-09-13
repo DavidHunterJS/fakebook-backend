@@ -69,13 +69,13 @@ if (isProduction && process.env.REDIS_URL) {
     
     RedisStore = connectRedis.default ? connectRedis.default(session) : connectRedis(session);
     
-    redisClient.connect().catch((err) => {
+    redisClient.connect().catch((err: any) => {
       console.error('Redis connection failed:', err);
       redisClient = null;
       RedisStore = null;
     });
     
-  } catch (error) {
+  } catch (error: any) {
     console.error('Redis setup failed:', error);
     redisClient = null;
     RedisStore = null;
