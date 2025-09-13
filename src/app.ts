@@ -55,9 +55,9 @@ let redisClient;
 let RedisStore;
 
 if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
-  const Redis = require('redis');
+  const redis = require('redis');
   const connectRedis = require('connect-redis');
-  
+
   RedisStore = connectRedis(session);
   redisClient = Redis.createClient({
     url: process.env.REDIS_URL
@@ -66,7 +66,8 @@ if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
 }
 
 const sessionMiddleware = session({
-store: redisClient && RedisStore ? new RedisStore({ client: redisClient }) : undefined,  secret: process.env.SESSION_SECRET || 'a-very-strong-secret',
+  store: redisClient && RedisStore ? new RedisStore({ client: redisClient }) : undefined,
+  secret: process.env.SESSION_SECRET || 'a-very-strong-secret',
   resave: false,
   saveUninitialized: false,
   cookie: {
