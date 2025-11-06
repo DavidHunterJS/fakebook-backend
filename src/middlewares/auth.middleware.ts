@@ -12,20 +12,20 @@ const authMiddleware: RequestHandler = async (req, res, next): Promise<void | Re
   console.log("Request path:", req.path);
   console.log("Request URL:", req.url);
   console.log("Request method:", req.method);
- 
-  if (req.path === '/auth/verify' || 
-      req.path === '/verify-magic-link' || 
+
+  // Skip auth for verification routes
+  if (req.path === '/auth/verify' ||
+      req.path === '/verify-magic-link' ||
       req.url.includes('verify-magic-link') ||
       (req.path === '/current' && req.headers.referer && req.headers.referer.includes('/auth/verify'))) {
     console.log("Skipping auth for verification-related route");
     return next();
   }
-  
+
   // Method 1: Check for session-based authentication (Passport.js/OAuth)
   if (req.isAuthenticated && req.isAuthenticated() && req.user) {
     console.log("Session auth successful for user:", (req.user as any).username || (req.user as any).email);
-    
-    // Update last active for session users too
+    // Update last active for session users
     try {
       const user = await User.findById((req.user as any)._id);
       if (user) {
@@ -35,14 +35,36 @@ const authMiddleware: RequestHandler = async (req, res, next): Promise<void | Re
     } catch (error) {
       console.error("Error updating last active for session user:", error);
     }
-    
-    return next();
+    return next(); // ✅ EXIT HERE - Don't check JWT
   }
 
-  // Method 2: Check for JWT token authentication
+  // Method 1.5: Manual session check (fallback)
+  // @ts-ignore
+  if (req.session && req.session.userId) {
+    console.log("Manual session found, userId:", req.session.userId);
+    try {
+      // @ts-ignore
+      const user = await User.findById(req.session.userId).select('-password');
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      if (!user.isActive) {
+        return res.status(403).json({ message: 'Account is deactivated' });
+      }
+      user.lastActive = new Date();
+      await user.save();
+      req.user = user;
+      console.log("Manual session auth successful for user:", user.username);
+      return next(); // ✅ EXIT HERE - Don't check JWT
+    } catch (error) {
+      console.error("Error with manual session:", error);
+    }
+  }
+
+  // Method 2: Check for JWT token authentication (only if no session)
   const authHeader = req.header('authorization');
   let token = req.header('x-auth-token');
-  
+
   if (!token && authHeader) {
     if (authHeader.startsWith('Bearer ')) {
       token = authHeader.slice(7).trim();
@@ -51,16 +73,24 @@ const authMiddleware: RequestHandler = async (req, res, next): Promise<void | Re
     }
   }
 
+  // ✅ If no token and no session, deny access
   if (!token) {
     console.log("No token and no session found, authorization denied");
     return res.status(401).json({ message: 'No token, authorization denied' });
   }
 
+  // ✅ Only try to verify JWT if we have a token that looks valid
   try {
     const jwtSecret = process.env.JWT_SECRET;
     if (!jwtSecret) {
       console.error('FATAL ERROR: JWT_SECRET is not defined in environment variables.');
       process.exit(1);
+    }
+
+    // ✅ Check if token looks like a JWT (has 3 parts)
+    if (token.split('.').length !== 3) {
+      console.log("Token doesn't look like a valid JWT, rejecting");
+      return res.status(401).json({ message: 'Invalid token format' });
     }
 
     const decoded = jwt.verify(token, jwtSecret) as IAuthPayload;

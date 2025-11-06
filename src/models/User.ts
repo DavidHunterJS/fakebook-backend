@@ -4,15 +4,37 @@ import mongoose, { Schema, Model, Document, Types } from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { Role, Permission } from '../config/roles';
 
+// --- NEW Interface Definitions (Aligned with Design Doc) ---
 
-
-// A helper type to handle populated fields
-type Populated<M, K extends keyof M> = Omit<M, K> & {
-  [P in K]: Exclude<M[P], Types.ObjectId[] | Types.ObjectId>
+// Sub-document for the new subscription model
+export interface ISubscription {
+  tier: 'Free' | 'Basic' | 'Pro';
+  status: 'Active' | 'Cancelled' | 'Past Due';
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  lastResetDate: Date;
 }
 
+// Sub-document for monthly and rollover credits
+export interface ICredits {
+  checksUsed: number;
+  fixesUsed: number;
+  checksRollover: number;
+  fixesRollover: number;
+}
 
-// --- Interface Definitions ---
+// Sub-document for the Free tier's lifetime credits
+export interface ILifetimeCredits {
+  checksUsed: number;
+  fixesUsed: number;
+}
+
+// Sub-document interfaces (unchanged)
+export interface IPrivacySettings {
+  profileVisibility: 'public' | 'friends' | 'private';
+  friendsVisibility: 'public' | 'friends' | 'private';
+  postsVisibility: 'public' | 'friends' | 'private';
+}
 
 export interface IUserReport extends Document {
   user: Types.ObjectId;
@@ -20,39 +42,8 @@ export interface IUserReport extends Document {
   date: Date;
 }
 
-// Sub-document interfaces
-export interface IPrivacySettings {
-  profileVisibility: 'public' | 'friends' | 'private';
-  friendsVisibility: 'public' | 'friends' | 'private';
-  postsVisibility: 'public' | 'friends' | 'private';
-}
 
-export interface ISubscriptionInfo {
-  plan: 'starter' | 'growth' | 'pro';
-  creditsPerMonth: number;
-  monthlyLimit: number;
-  resetDate: Date;
-  lastResetDate: Date;
-}
-
-export interface IWorkflowStats {
-  totalWorkflows: number;
-  productEnhancements: number;
-  lifestyleScenes: number;
-  productVariants: number;
-  totalCreditsUsed: number;
-  lastWorkflowDate?: Date;
-}
-
-export interface ICreditTransaction extends Document {
-  amount: number;
-  type: 'deduct' | 'add' | 'refund';
-  reason: string;
-  workflowJobId?: string;
-  date: Date;
-}
-
-// 1. Interface for the User's data attributes (the document shape)
+// --- MAIN USER INTERFACE (Refactored) ---
 export interface IUserDocument {
   username: string;
   email: string;
@@ -86,46 +77,55 @@ export interface IUserDocument {
   googleId?: string;
   authProvider: 'local' | 'google';
   isOAuthUser: boolean;
-  creditsRemaining: number;
-  creditsTotal: number;
-  subscription: ISubscriptionInfo;
-  workflowStats: IWorkflowStats;
-  creditTransactions: Types.DocumentArray<ICreditTransaction>;
   createdAt: Date;
   updatedAt: Date;
   reports: Types.DocumentArray<IUserReport>;
+
+  // --- NEW/UPDATED FIELDS ---
+  subscription: ISubscription;
+  credits: ICredits;
+  lifetimeCredits: ILifetimeCredits;
 }
 
-// 2. Interface for the User's instance methods
+// Interface for the User's instance methods (credit methods removed)
 export interface IUserMethods {
   comparePassword(candidatePassword: string): Promise<boolean>;
   getDisplayName(): string;
-  hasEnoughCredits(requiredCredits: number): boolean;
-  deductCredits(amount: number, reason: string, workflowJobId?: string): Promise<void>;
-  addCredits(amount: number, reason: string): Promise<void>;
-  resetMonthlyCredits(): Promise<void>;
-  updateWorkflowStats(workflowType: 'product_enhancement' | 'lifestyle_scenes' | 'product_variants'): Promise<void>;
   canLoginLocally(): boolean; 
-  refundCredits(amount: number, reason: string, workflowJobId?: string): Promise<void>;
 }
 
-// 3. Interface for the User Model's static methods
+// Interface for the User Model (static methods simplified)
 export interface IUserModel extends Model<IUserDocument, {}, IUserMethods> {
-  resetAllMonthlyCredits(): Promise<number>;
+  // Static methods can be added here if needed in the future
 }
 export type IUser = IUserDocument & IUserMethods & Document;
+
+
 // --- Schema Definitions ---
 
-const CreditTransactionSchema = new Schema<ICreditTransaction>({
-  amount: { type: Number, required: true },
-  type: { type: String, enum: ['deduct', 'add', 'refund'], required: true },
-  reason: { type: String, required: true },
-  workflowJobId: { type: String },
-  date: { type: Date, default: Date.now }
+const subscriptionSchema = new Schema<ISubscription>({
+  tier: { type: String, enum: ['Free', 'Basic', 'Pro'], default: 'Free' },
+  status: { type: String, enum: ['Active', 'Cancelled', 'Past Due'], default: 'Active' },
+  stripeCustomerId: { type: String },
+  stripeSubscriptionId: { type: String },
+  lastResetDate: { type: Date, default: () => new Date() },
+});
+
+const creditsSchema = new Schema<ICredits>({
+  checksUsed: { type: Number, default: 0, min: 0 },
+  fixesUsed: { type: Number, default: 0, min: 0 },
+  checksRollover: { type: Number, default: 0, min: 0 },
+  fixesRollover: { type: Number, default: 0, min: 0 },
+});
+
+const lifetimeCreditsSchema = new Schema<ILifetimeCredits>({
+  checksUsed: { type: Number, default: 0, min: 0 },
+  fixesUsed: { type: Number, default: 0, min: 0 },
 });
 
 const UserSchema = new Schema<IUserDocument, IUserModel, IUserMethods>(
   {
+    // --- Unchanged Fields ---
     username: { type: String, required: true, unique: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String },
@@ -162,29 +162,16 @@ const UserSchema = new Schema<IUserDocument, IUserModel, IUserMethods>(
     googleId: { type: String, unique: true, sparse: true },
     authProvider: { type: String, enum: ['local', 'google'], default: 'local' },
     isOAuthUser: { type: Boolean, default: false },
-    creditsRemaining: { type: Number, default: 100, min: 0 },
-    creditsTotal: { type: Number, default: 100 },
-    creditTransactions: [CreditTransactionSchema],
-    subscription: {
-      plan: { type: String, enum: ['starter', 'growth', 'pro'], default: 'starter' },
-      creditsPerMonth: { type: Number, default: 100 },
-      monthlyLimit: { type: Number, default: 100 },
-      resetDate: { type: Date, default: () => new Date(new Date().setMonth(new Date().getMonth() + 1, 1)) },
-      lastResetDate: { type: Date, default: Date.now }
-    },
     reports: [{
       user: { type: Schema.Types.ObjectId, ref: 'User' },
       reason: String,
       date: { type: Date, default: Date.now }
     }],
-    workflowStats: {
-      totalWorkflows: { type: Number, default: 0 },
-      productEnhancements: { type: Number, default: 0 },
-      lifestyleScenes: { type: Number, default: 0 },
-      productVariants: { type: Number, default: 0 },
-      totalCreditsUsed: { type: Number, default: 0 },
-      lastWorkflowDate: { type: Date }
-    }
+    
+    // --- NEW/UPDATED Schemas ---
+    subscription: { type: subscriptionSchema, default: () => ({}) },
+    credits: { type: creditsSchema, default: () => ({}) },
+    lifetimeCredits: { type: lifetimeCreditsSchema, default: () => ({}) },
   },
   { timestamps: true }
 );
@@ -193,7 +180,6 @@ const UserSchema = new Schema<IUserDocument, IUserModel, IUserMethods>(
 UserSchema.index({ email: 1},{ unique: true });
 UserSchema.index({ googleId: 1}, {unique: true, sparse: true });
 UserSchema.index({ username: 1}, {unique: true });
-UserSchema.index({ 'subscription.resetDate': 1 });
 
 // --- Middleware ---
 UserSchema.pre('save', async function(next) {
@@ -203,12 +189,9 @@ UserSchema.pre('save', async function(next) {
         this.isEmailVerified = true;
         this.password = undefined;
     }
-
-    if (this.isModified('subscription.plan')) {
-        const creditLimits = { starter: 100, growth: 500, pro: 2000 };
-        this.subscription.creditsPerMonth = creditLimits[this.subscription.plan];
-        this.subscription.monthlyLimit = creditLimits[this.subscription.plan];
-    }
+    
+    // REMOVED: Obsolete middleware that set credits based on plan.
+    // This logic now lives in the configuration file and service functions.
     
     if (this.isModified('password') && this.password) {
         try {
@@ -222,7 +205,7 @@ UserSchema.pre('save', async function(next) {
     next();
 });
 
-// --- Methods ---
+// --- Methods (Credit methods removed) ---
 UserSchema.methods.comparePassword = async function(candidatePassword: string): Promise<boolean> {
   if (!this.password) return false;
   return bcrypt.compare(candidatePassword, this.password);
@@ -232,68 +215,11 @@ UserSchema.methods.getDisplayName = function(): string {
   return `${this.firstName} ${this.lastName}`.trim();
 };
 
-UserSchema.methods.hasEnoughCredits = function(requiredCredits: number): boolean {
-  return this.creditsRemaining >= requiredCredits;
-};
-
-UserSchema.methods.deductCredits = async function(amount: number, reason: string, workflowJobId?: string): Promise<void> {
-  if (this.creditsRemaining < amount) throw new Error('Insufficient credits');
-  
-  this.creditsRemaining -= amount;
-  this.workflowStats.totalCreditsUsed += amount;
-  
-  this.creditTransactions.push({ amount: -amount, type: 'deduct', reason, workflowJobId, date: new Date() });
-  await this.save();
-};
-
-UserSchema.methods.addCredits = async function(amount: number, reason: string): Promise<void> {
-  this.creditsRemaining += amount;
-  this.creditsTotal += amount;
-  this.creditTransactions.push({ amount, type: 'add', reason, date: new Date() });
-  await this.save();
-};
-
-UserSchema.methods.resetMonthlyCredits = async function(): Promise<void> {
-    const now = new Date();
-    if (now >= this.subscription.resetDate) {
-        this.creditsRemaining = this.subscription.creditsPerMonth;
-        this.subscription.lastResetDate = now;
-        
-        const nextReset = new Date(now);
-        nextReset.setMonth(nextReset.getMonth() + 1);
-        nextReset.setDate(1);
-        this.subscription.resetDate = nextReset;
-        
-        this.creditTransactions.push({ amount: this.subscription.creditsPerMonth, type: 'add', reason: 'Monthly credit reset', date: now });
-        await this.save();
-    }
-};
-
-UserSchema.methods.updateWorkflowStats = async function(workflowType: 'product_enhancement' | 'lifestyle_scenes' | 'product_variants'): Promise<void> {
-    this.workflowStats.totalWorkflows++;
-    this.workflowStats.lastWorkflowDate = new Date();
-    
-    switch (workflowType) {
-        case 'product_enhancement': this.workflowStats.productEnhancements++; break;
-        case 'lifestyle_scenes': this.workflowStats.lifestyleScenes++; break;
-        case 'product_variants': this.workflowStats.productVariants++; break;
-    }
-    await this.save();
-};
-
-// --- Static Methods ---
-UserSchema.statics.resetAllMonthlyCredits = async function(): Promise<number> {
-  const now = new Date();
-  const usersToReset = await this.find({ 'subscription.resetDate': { $lte: now } });
-
-  await Promise.all(
-    usersToReset.map((user: IUserDocument & IUserMethods) => user.resetMonthlyCredits())
-  );
-
-  return usersToReset.length;
+UserSchema.methods.canLoginLocally = function(): boolean {
+    return this.authProvider === 'local' && !!this.password;
 };
 
 // --- Model Export ---
-const User = mongoose.model<IUserDocument, IUserModel>('User', UserSchema);
+const User = mongoose.models.User || mongoose.model<IUserDocument, IUserModel>('User', UserSchema);
 
 export default User;

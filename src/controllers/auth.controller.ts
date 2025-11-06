@@ -100,7 +100,7 @@ export const verifyMagicLink = async (req: Request, res: Response, next: NextFun
         return next(err);
       }
       console.log(`Session created successfully for user: ${user.email}`);
-      return res.redirect(`${frontendUrl}/dashboard`);
+      return res.redirect(`${frontendUrl}/`);
     });
 
   } catch (error) {

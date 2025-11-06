@@ -1,3 +1,4 @@
+//  src/app.ts
 import express, { Request, Response, NextFunction } from 'express';
 import connectDB from './config/db';
 import cors from 'cors';
@@ -8,9 +9,7 @@ import dotenv from 'dotenv';
 import socketHandler from './sockets/socket';
 import session from 'express-session';
 import passport from './config/passport';
-import Redis from 'redis';
-import ConnectRedis from 'connect-redis';
-import { createClient } from 'redis';
+import MongoStore from 'connect-mongo';
 
 // Import all your route files
 import authRoutes from './routes/auth.routes';
@@ -29,6 +28,11 @@ import conversationRoutes from './routes/conversation.routes';
 import messageRoutes from './routes/message.routes';
 import chatUploadRoutes from './routes/chatUploads.routes';
 import workflowRoutes from './routes/workflow.routes';
+import webhooksRouter from './routes/webhooks';
+import subscriptionRoutes from './routes/subscriptions';
+import analysisRoutes from './routes/analysis';
+import fixRoutes from './routes/fix.routes'
+
 
 dotenv.config();
 
@@ -47,10 +51,10 @@ const corsOptions: cors.CorsOptions = {
   origin: allowedOrigins,
   credentials: true,
 };
-
+app.options('*', cors(corsOptions));
 app.use(cors(corsOptions));
-app.use(express.json());
 
+// ✅ Redis setup for production
 let redisClient;
 let RedisStore;
 
@@ -82,15 +86,21 @@ if (isProduction && process.env.REDIS_URL) {
   }
 }
 
+// ✅ Session configuration with MongoDB fallback
 const sessionMiddleware = session({
-  store: (redisClient && RedisStore) ? new RedisStore({ client: redisClient }) : undefined,
+  store: (redisClient && RedisStore) 
+    ? new RedisStore({ client: redisClient })
+    : MongoStore.create({
+        mongoUrl: process.env.MONGODB_URI!,
+        ttl: 24 * 60 * 60, // 1 day in seconds
+      }),
   secret: process.env.SESSION_SECRET || 'a-very-strong-secret',
   resave: false,
   saveUninitialized: false,
   cookie: {
     secure: isProduction,
     sameSite: isProduction ? 'none' : 'lax',
-    maxAge: 24 * 60 * 60 * 1000,
+    maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
     httpOnly: true,
     domain: isProduction ? process.env.COOKIE_DOMAIN : undefined,
   }
@@ -99,6 +109,25 @@ const sessionMiddleware = session({
 app.use(sessionMiddleware);
 app.use(passport.initialize());
 app.use(passport.session());
+
+// ✅ Debug logging middleware (comment out in production)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api') && process.env.NODE_ENV !== 'production') {
+    console.log(`📍 ${req.method} ${req.path}`);
+    if (req.isAuthenticated && req.isAuthenticated()) {
+      console.log('   ✅ Authenticated:', (req.user as any)?.email || (req.user as any)?.username);
+    } else {
+      console.log('   ❌ Not authenticated');
+    }
+  }
+  next();
+});
+
+// ✅ Webhook route MUST come BEFORE express.json() (for Stripe raw body)
+app.use('/api/webhooks', webhooksRouter); 
+
+// ✅ Now parse JSON for all other routes
+app.use(express.json());
 
 // --- API ROUTES ---
 app.use('/api/auth', authRoutes);
@@ -111,12 +140,15 @@ app.use('/api/admin', adminRoutes);
 app.use('/api', generationRoutes);
 app.use('/api', rewriteRoutes);
 app.use('/api', imagegenRouter);
+app.use('/api', analysisRoutes);
+app.use('/api', fixRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/follows', followRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/chat', chatUploadRoutes);
 app.use('/api/workflow', workflowRoutes);
+app.use('/api/subscription', subscriptionRoutes); // ✅ Subscription routes
 
 // --- 404 and Error Handlers ---
 app.use('*', (req, res) => {
@@ -131,15 +163,12 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 // --- Server and Socket.IO Setup ---
 const server = http.createServer(app);
 
-// ✅ --- THIS IS THE FINAL FIX ---
 const io = new SocketIOServer(server, {
   cors: corsOptions,
-  // This explicitly tells Socket.IO to use the same paths as a standard Express app,
-  // which is required for compatibility with Heroku's router.
   path: '/socket.io/',
 });
-// --- END OF FIX ---
 
+// ✅ Share session with Socket.IO
 const wrap = (middleware: any) => (socket: any, next: any) => middleware(socket.request, {}, next);
 io.use(wrap(sessionMiddleware));
 io.use(wrap(passport.initialize()));
@@ -164,8 +193,11 @@ if (process.env.NODE_ENV !== 'test') {
 
 if (require.main === module) {
   const PORT = process.env.PORT || 5000;
-  server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  server.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`📍 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
+  });
 }
 
 export default app;
-
