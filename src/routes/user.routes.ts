@@ -72,52 +72,52 @@ router.get('/search', authMiddleware, async (req, res) => {
  * @desc    Search for users
  * @access  Private
  */
-router.get(
-  '/',
-  [
-    query('query')
-      .optional()
-      .isString()
-      .trim()
-      .isLength({ min: 1 })
-      .withMessage('Search query must not be empty'),
+// router.get(
+//   '/',
+//   [
+//     query('query')
+//       .optional()
+//       .isString()
+//       .trim()
+//       .isLength({ min: 1 })
+//       .withMessage('Search query must not be empty'),
     
-    query('page')
-      .optional()
-      .isInt({ min: 1 })
-      .withMessage('Page must be a positive integer'),
+//     query('page')
+//       .optional()
+//       .isInt({ min: 1 })
+//       .withMessage('Page must be a positive integer'),
     
-    query('limit')
-      .optional()
-      .isInt({ min: 1, max: 50 })
-      .withMessage('Limit must be between 1 and 50')
-  ],
-  userController.searchUsers
-);
+//     query('limit')
+//       .optional()
+//       .isInt({ min: 1, max: 50 })
+//       .withMessage('Limit must be between 1 and 50')
+//   ],
+//   userController.searchUsers
+// );
 
 /**
  * @route   GET api/users/suggestions
  * @desc    Get friend suggestions
  * @access  Private
  */
-router.get('/suggestions', userController.getFriendSuggestions);
+// router.get('/suggestions', userController.getFriendSuggestions);
 
 /**
  * @route   GET api/users/profile/:username
  * @desc    Get user profile by username
  * @access  Private
  */
-router.get(
-  '/profile/:username',
-  [
-    param('username')
-      .isString()
-      .trim()
-      .notEmpty()
-      .withMessage('Username is required')
-  ],
-  userController.getUserProfile
-);
+// router.get(
+//   '/profile/:username',
+//   [
+//     param('username')
+//       .isString()
+//       .trim()
+//       .notEmpty()
+//       .withMessage('Username is required')
+//   ],
+//   userController.getUserProfile
+// );
 
 
 /**
@@ -125,15 +125,15 @@ router.get(
  * @desc    Get user by ID
  * @access  Private
  */
-router.get(
-  '/:id',
-  [
-    param('id')
-      .isMongoId()
-      .withMessage('Invalid user ID')
-  ],
-  userController.getUserById
-);
+// router.get(
+//   '/:id',
+//   [
+//     param('id')
+//       .isMongoId()
+//       .withMessage('Invalid user ID')
+//   ],
+//   userController.getUserById
+// );
 
 /**
  * @route   GET api/users/:id/friends
@@ -168,44 +168,44 @@ router.get(
  * @desc    Update user profile
  * @access  Private
  */
-router.put(
-  '/profile',
-  [
-    body('firstName')
-      .optional()
-      .isString()
-      .trim()
-      .isLength({ min: 1, max: 50 })
-      .withMessage('First name must be between 1 and 50 characters'),
+// router.put(
+//   '/profile',
+//   [
+//     body('firstName')
+//       .optional()
+//       .isString()
+//       .trim()
+//       .isLength({ min: 1, max: 50 })
+//       .withMessage('First name must be between 1 and 50 characters'),
     
-    body('lastName')
-      .optional()
-      .isString()
-      .trim()
-      .isLength({ min: 1, max: 50 })
-      .withMessage('Last name must be between 1 and 50 characters'),
+//     body('lastName')
+//       .optional()
+//       .isString()
+//       .trim()
+//       .isLength({ min: 1, max: 50 })
+//       .withMessage('Last name must be between 1 and 50 characters'),
     
-    body('bio')
-      .optional()
-      .isString()
-      .trim()
-      .isLength({ max: 500 })
-      .withMessage('Bio cannot exceed 500 characters'),
+//     body('bio')
+//       .optional()
+//       .isString()
+//       .trim()
+//       .isLength({ max: 500 })
+//       .withMessage('Bio cannot exceed 500 characters'),
     
-    body('location')
-      .optional()
-      .isString()
-      .trim()
-      .isLength({ max: 100 })
-      .withMessage('Location cannot exceed 100 characters'),
+//     body('location')
+//       .optional()
+//       .isString()
+//       .trim()
+//       .isLength({ max: 100 })
+//       .withMessage('Location cannot exceed 100 characters'),
     
-    body('birthday')
-      .optional()
-      .isISO8601()
-      .withMessage('Birthday must be a valid date')
-  ],
-  userController.updateProfile
-);
+//     body('birthday')
+//       .optional()
+//       .isISO8601()
+//       .withMessage('Birthday must be a valid date')
+//   ],
+//   userController.updateProfile
+// );
 
 /**
  * @route   POST api/users/profile/picture
@@ -236,171 +236,171 @@ router.post(
  * @desc    Get user's friends
  * @access  Private
  */
-router.get('/friends', userController.getFriends);
+// router.get('/friends', userController.getFriends);
 
 /**
  * @route   GET api/users/friend-requests
  * @desc    Get user's friend requests
  * @access  Private
  */
-router.get('/friend-requests', userController.getFriendRequests);
+// router.get('/friend-requests', userController.getFriendRequests);
 
 /**
  * @route   POST api/users/friend-request/:userId
  * @desc    Send friend request
  * @access  Private
  */
-router.post(
-  '/friend-request/:userId',
-  [
-    param('userId')
-      .isMongoId()
-      .withMessage('Invalid user ID')
-  ],
-  userController.sendFriendRequest
-);
+// router.post(
+//   '/friend-request/:userId',
+//   [
+//     param('userId')
+//       .isMongoId()
+//       .withMessage('Invalid user ID')
+//   ],
+//   userController.sendFriendRequest
+// );
 
 /**
  * @route   PUT api/users/friend-request/:userId/accept
  * @desc    Accept friend request
  * @access  Private
  */
-router.put(
-  '/friend-request/:userId/accept',
-  [
-    param('userId')
-      .isMongoId()
-      .withMessage('Invalid user ID')
-  ],
-  userController.acceptFriendRequest
-);
+// router.put(
+//   '/friend-request/:userId/accept',
+//   [
+//     param('userId')
+//       .isMongoId()
+//       .withMessage('Invalid user ID')
+//   ],
+//   userController.acceptFriendRequest
+// );
 
 /**
  * @route   PUT api/users/friend-request/:userId/reject
  * @desc    Reject friend request
  * @access  Private
  */
-router.put(
-  '/friend-request/:userId/reject',
-  [
-    param('userId')
-      .isMongoId()
-      .withMessage('Invalid user ID')
-  ],
-  userController.rejectFriendRequest
-);
+// router.put(
+//   '/friend-request/:userId/reject',
+//   [
+//     param('userId')
+//       .isMongoId()
+//       .withMessage('Invalid user ID')
+//   ],
+//   userController.rejectFriendRequest
+// );
 
 /**
  * @route   DELETE api/users/friend/:userId
  * @desc    Remove friend
  * @access  Private
  */
-router.delete(
-  '/friend/:userId',
-  [
-    param('userId')
-      .isMongoId()
-      .withMessage('Invalid user ID')
-  ],
-  userController.removeFriend
-);
+// router.delete(
+//   '/friend/:userId',
+//   [
+//     param('userId')
+//       .isMongoId()
+//       .withMessage('Invalid user ID')
+//   ],
+//   userController.removeFriend
+// );
 
 /**
  * @route   POST api/users/block/:userId
  * @desc    Block user
  * @access  Private
  */
-router.post(
-  '/block/:userId',
-  [
-    param('userId')
-      .isMongoId()
-      .withMessage('Invalid user ID')
-  ],
-  userController.blockUser
-);
+// router.post(
+//   '/block/:userId',
+//   [
+//     param('userId')
+//       .isMongoId()
+//       .withMessage('Invalid user ID')
+//   ],
+//   userController.blockUser
+// );
 
 /**
  * @route   DELETE api/users/block/:userId
  * @desc    Unblock user
  * @access  Private
  */
-router.delete(
-  '/block/:userId',
-  [
-    param('userId')
-      .isMongoId()
-      .withMessage('Invalid user ID')
-  ],
-  userController.unblockUser
-);
+// router.delete(
+//   '/block/:userId',
+//   [
+//     param('userId')
+//       .isMongoId()
+//       .withMessage('Invalid user ID')
+//   ],
+//   userController.unblockUser
+// );
 
 /**
  * @route   GET api/users/blocked
  * @desc    Get blocked users
  * @access  Private
  */
-router.get('/blocked', userController.getBlockedUsers);
+// router.get('/blocked', userController.getBlockedUsers);
 
 /**
  * @route   GET api/users/online-friends
  * @desc    Get online friends
  * @access  Private
  */
-router.get('/online-friends', userController.getOnlineFriends);
+// router.get('/online-friends', userController.getOnlineFriends);
 
 /**
  * @route   PUT api/users/privacy-settings
  * @desc    Update privacy settings
  * @access  Private
  */
-router.put(
-  '/privacy-settings',
-  [
-    body('profileVisibility')
-      .optional()
-      .isIn(['public', 'friends', 'private'])
-      .withMessage('Profile visibility must be public, friends, or private'),
+// router.put(
+//   '/privacy-settings',
+//   [
+//     body('profileVisibility')
+//       .optional()
+//       .isIn(['public', 'friends', 'private'])
+//       .withMessage('Profile visibility must be public, friends, or private'),
     
-    body('friendsVisibility')
-      .optional()
-      .isIn(['public', 'friends', 'private'])
-      .withMessage('Friends visibility must be public, friends, or private'),
+//     body('friendsVisibility')
+//       .optional()
+//       .isIn(['public', 'friends', 'private'])
+//       .withMessage('Friends visibility must be public, friends, or private'),
     
-    body('postsVisibility')
-      .optional()
-      .isIn(['public', 'friends', 'private'])
-      .withMessage('Posts visibility must be public, friends, or private')
-  ],
-  userController.updatePrivacySettings
-);
+//     body('postsVisibility')
+//       .optional()
+//       .isIn(['public', 'friends', 'private'])
+//       .withMessage('Posts visibility must be public, friends, or private')
+//   ],
+//   userController.updatePrivacySettings
+// );
 
 /**
  * @route   GET api/users/admin/inactive
  * @desc    Get inactive users (admin only)
  * @access  Private/Admin
  */
-router.get(
-  '/admin/inactive',
-  isAdmin,
-  [
-    query('days')
-      .optional()
-      .isInt({ min: 1 })
-      .withMessage('Days must be a positive integer'),
+// router.get(
+//   '/admin/inactive',
+//   isAdmin,
+//   [
+//     query('days')
+//       .optional()
+//       .isInt({ min: 1 })
+//       .withMessage('Days must be a positive integer'),
     
-    query('page')
-      .optional()
-      .isInt({ min: 1 })
-      .withMessage('Page must be a positive integer'),
+//     query('page')
+//       .optional()
+//       .isInt({ min: 1 })
+//       .withMessage('Page must be a positive integer'),
     
-    query('limit')
-      .optional()
-      .isInt({ min: 1, max: 100 })
-      .withMessage('Limit must be between 1 and 100')
-  ],
-  userController.getInactiveUsers
-);
+//     query('limit')
+//       .optional()
+//       .isInt({ min: 1, max: 100 })
+//       .withMessage('Limit must be between 1 and 100')
+//   ],
+//   userController.getInactiveUsers
+// );
 
 /**
  * @route   POST api/users/:userId/report
