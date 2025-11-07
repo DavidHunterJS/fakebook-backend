@@ -27,7 +27,7 @@ import uploadRoutes from './routes/upload.routes';
 import conversationRoutes from './routes/conversation.routes';
 import messageRoutes from './routes/message.routes';
 import chatUploadRoutes from './routes/chatUploads.routes';
-import workflowRoutes from './routes/workflow.routes';
+// import workflowRoutes from './routes/workflow.routes';
 import webhooksRouter from './routes/webhooks';
 import subscriptionRoutes from './routes/subscriptions';
 import analysisRoutes from './routes/analysis';
@@ -147,7 +147,7 @@ app.use('/api/upload', uploadRoutes);
 // app.use('/api/conversations', conversationRoutes);
 // app.use('/api/messages', messageRoutes);
 // app.use('/api/chat', chatUploadRoutes);
-app.use('/api/workflow', workflowRoutes);
+// app.use('/api/workflow', workflowRoutes);
 app.use('/api/subscription', subscriptionRoutes); // ✅ Subscription routes
 
 // --- 404 and Error Handlers ---
