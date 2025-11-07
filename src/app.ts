@@ -14,7 +14,7 @@ import MongoStore from 'connect-mongo';
 // Import all your route files
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
-import postRoutes from './routes/post.routes';
+// import postRoutes from './routes/post.routes';
 import commentRoutes from './routes/comment.routes';
 import friendRoutes from './routes/friend.routes';
 import notificationRoutes from './routes/notification.routes';
@@ -23,7 +23,7 @@ import generationRoutes from './routes/generation.routes';
 import rewriteRoutes from './routes/rewrite.routes';
 import imagegenRouter from './routes/genimgage.routes';
 import uploadRoutes from './routes/upload.routes';
-import followRoutes from './routes/follow.routes';
+// import followRoutes from './routes/follow.routes';
 import conversationRoutes from './routes/conversation.routes';
 import messageRoutes from './routes/message.routes';
 import chatUploadRoutes from './routes/chatUploads.routes';
@@ -132,10 +132,10 @@ app.use(express.json());
 // --- API ROUTES ---
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/posts', postRoutes);
-app.use('/api/comments', commentRoutes);
-app.use('/api/friends', friendRoutes);
-app.use('/api/notifications', notificationRoutes);
+// app.use('/api/posts', postRoutes);
+// app.use('/api/comments', commentRoutes);
+// app.use('/api/friends', friendRoutes);
+// app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', generationRoutes);
 app.use('/api', rewriteRoutes);
@@ -143,10 +143,10 @@ app.use('/api', imagegenRouter);
 app.use('/api', analysisRoutes);
 app.use('/api', fixRoutes);
 app.use('/api/upload', uploadRoutes);
-app.use('/api/follows', followRoutes);
-app.use('/api/conversations', conversationRoutes);
-app.use('/api/messages', messageRoutes);
-app.use('/api/chat', chatUploadRoutes);
+// app.use('/api/follows', followRoutes);
+// app.use('/api/conversations', conversationRoutes);
+// app.use('/api/messages', messageRoutes);
+// app.use('/api/chat', chatUploadRoutes);
 app.use('/api/workflow', workflowRoutes);
 app.use('/api/subscription', subscriptionRoutes); // ✅ Subscription routes
 
