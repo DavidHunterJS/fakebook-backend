@@ -212,24 +212,24 @@ router.get(
  * @desc    Upload profile picture
  * @access  Private
  */
-router.post(
-  '/profile/picture', 
-  authMiddleware, 
-  s3UploadMiddleware.profilePicture, 
-  userController.uploadProfilePicture
-);
+// router.post(
+//   '/profile/picture', 
+//   authMiddleware, 
+//   s3UploadMiddleware.profilePicture, 
+//   userController.uploadProfilePicture
+// );
 
 /**
  * @route   POST api/users/profile/cover
  * @desc    Upload cover photo
  * @access  Private
  */
-router.post(
-  '/profile/cover',
-  authMiddleware,
-  s3UploadMiddleware.coverPhoto,
-  userController.uploadCoverPhoto
-);
+// router.post(
+//   '/profile/cover',
+//   authMiddleware,
+//   s3UploadMiddleware.coverPhoto,
+//   userController.uploadCoverPhoto
+// );
 
 /**
  * @route   GET api/users/friends

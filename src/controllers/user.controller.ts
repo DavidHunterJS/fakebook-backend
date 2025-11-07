@@ -649,145 +649,145 @@ export const getUserFriends = async (req: Request, res: Response) => {
 //   }
 // };
 
-export const uploadProfilePicture = async (req: Request, res: Response): Promise<Response> => {
-  console.log('--- [Controller] uploadProfilePicture: Entered ---');
+// export const uploadProfilePicture = async (req: Request, res: Response): Promise<Response> => {
+//   console.log('--- [Controller] uploadProfilePicture: Entered ---');
 
-  if (!req.user || !(req.user as any).id) {
-    console.error('[Controller] uploadProfilePicture: Error - User not authenticated or ID missing from req.user.');
-    return res.status(401).json({ message: 'Not authorized. User ID missing.' });
-  }
-  const userId = (req.user as any).id;
+//   if (!req.user || !(req.user as any).id) {
+//     console.error('[Controller] uploadProfilePicture: Error - User not authenticated or ID missing from req.user.');
+//     return res.status(401).json({ message: 'Not authorized. User ID missing.' });
+//   }
+//   const userId = (req.user as any).id;
 
-  if (!req.file) {
-    console.error('[Controller] uploadProfilePicture: Error - No file uploaded.');
-    return res.status(400).json({ message: 'No file uploaded. Please select an image.' });
-  }
+//   if (!req.file) {
+//     console.error('[Controller] uploadProfilePicture: Error - No file uploaded.');
+//     return res.status(400).json({ message: 'No file uploaded. Please select an image.' });
+//   }
 
-  // When using multer-s3, file.key contains the S3 object key
-  // file.location contains the full S3 URL
-  // If S3_BUCKET_NAME is not set, your middleware falls back to local,
-  // in which case req.file.filename would be used by the s3UploadMiddleware.deleteFile's local path.
-  // We should primarily rely on the 'key' provided by multer-s3 or the filename for local.
-  // Your s3UploadMiddleware.deleteFile and getFileUrl handle the conditional logic.
+//   // When using multer-s3, file.key contains the S3 object key
+//   // file.location contains the full S3 URL
+//   // If S3_BUCKET_NAME is not set, your middleware falls back to local,
+//   // in which case req.file.filename would be used by the s3UploadMiddleware.deleteFile's local path.
+//   // We should primarily rely on the 'key' provided by multer-s3 or the filename for local.
+//   // Your s3UploadMiddleware.deleteFile and getFileUrl handle the conditional logic.
 
-  const newFileIdentifier = (req.file as any).key || req.file.filename; // S3 key or local filename
+//   const newFileIdentifier = (req.file as any).key || req.file.filename; // S3 key or local filename
 
-  console.log(`[Controller] uploadProfilePicture: File received for user ${userId}. Identifier: ${newFileIdentifier}`);
+//   console.log(`[Controller] uploadProfilePicture: File received for user ${userId}. Identifier: ${newFileIdentifier}`);
 
-  try {
-    const userToUpdate = await User.findById(userId);
+//   try {
+//     const userToUpdate = await User.findById(userId);
 
-    if (!userToUpdate) {
-      console.error(`[Controller] uploadProfilePicture: Error - User not found with ID: ${userId}`);
-      // If user not found, the uploaded file is orphaned, attempt to delete it.
-      // s3UploadMiddleware.deleteFile will handle if it's S3 or local
-      await s3UploadMiddleware.deleteFile(newFileIdentifier);
-      console.log(`[Controller] uploadProfilePicture: Cleaned up orphaned file: ${newFileIdentifier}`);
-      return res.status(404).json({ message: 'User not found' });
-    }
+//     if (!userToUpdate) {
+//       console.error(`[Controller] uploadProfilePicture: Error - User not found with ID: ${userId}`);
+//       // If user not found, the uploaded file is orphaned, attempt to delete it.
+//       // s3UploadMiddleware.deleteFile will handle if it's S3 or local
+//       await s3UploadMiddleware.deleteFile(newFileIdentifier);
+//       console.log(`[Controller] uploadProfilePicture: Cleaned up orphaned file: ${newFileIdentifier}`);
+//       return res.status(404).json({ message: 'User not found' });
+//     }
 
-    const oldProfilePictureIdentifier = userToUpdate.profilePicture;
+//     const oldProfilePictureIdentifier = userToUpdate.profilePicture;
 
-    // Update user's profilePicture field with the new S3 key or local filename
-    userToUpdate.profilePicture = newFileIdentifier;
-    await userToUpdate.save();
-    console.log(`[Controller] uploadProfilePicture: User ${userToUpdate.username} profile picture updated in DB to: ${userToUpdate.profilePicture}`);
+//     // Update user's profilePicture field with the new S3 key or local filename
+//     userToUpdate.profilePicture = newFileIdentifier;
+//     await userToUpdate.save();
+//     console.log(`[Controller] uploadProfilePicture: User ${userToUpdate.username} profile picture updated in DB to: ${userToUpdate.profilePicture}`);
 
-    // If there was an old profile picture and it wasn't a default, delete it
-    if (oldProfilePictureIdentifier && oldProfilePictureIdentifier !== 'default-avatar.png') {
-      console.log(`[Controller] uploadProfilePicture: Attempting to delete old profile picture: ${oldProfilePictureIdentifier}`);
-      const deleteSuccess = await s3UploadMiddleware.deleteFile(oldProfilePictureIdentifier);
-      if (deleteSuccess) {
-        console.log(`[Controller] uploadProfilePicture: Successfully deleted old profile picture: ${oldProfilePictureIdentifier}`);
-      } else {
-        console.warn(`[Controller] uploadProfilePicture: Failed or old profile picture not found for deletion: ${oldProfilePictureIdentifier}`);
-      }
-    }
+//     // If there was an old profile picture and it wasn't a default, delete it
+//     if (oldProfilePictureIdentifier && oldProfilePictureIdentifier !== 'default-avatar.png') {
+//       console.log(`[Controller] uploadProfilePicture: Attempting to delete old profile picture: ${oldProfilePictureIdentifier}`);
+//       const deleteSuccess = await s3UploadMiddleware.deleteFile(oldProfilePictureIdentifier);
+//       if (deleteSuccess) {
+//         console.log(`[Controller] uploadProfilePicture: Successfully deleted old profile picture: ${oldProfilePictureIdentifier}`);
+//       } else {
+//         console.warn(`[Controller] uploadProfilePicture: Failed or old profile picture not found for deletion: ${oldProfilePictureIdentifier}`);
+//       }
+//     }
 
-    // Construct the full URL for the newly uploaded profile picture using your middleware's helper
-    const newProfilePictureUrl = s3UploadMiddleware.getFileUrl(userToUpdate.profilePicture);
+//     // Construct the full URL for the newly uploaded profile picture using your middleware's helper
+//     const newProfilePictureUrl = s3UploadMiddleware.getFileUrl(userToUpdate.profilePicture);
 
-    return res.status(200).json({
-      message: 'Profile picture updated successfully',
-      profilePicture: userToUpdate.profilePicture, // The S3 key or local filename
-      profilePictureUrl: newProfilePictureUrl     // The full URL for frontend use
-    });
+//     return res.status(200).json({
+//       message: 'Profile picture updated successfully',
+//       profilePicture: userToUpdate.profilePicture, // The S3 key or local filename
+//       profilePictureUrl: newProfilePictureUrl     // The full URL for frontend use
+//     });
 
-  } catch (error: unknown) {
-    const err = error as Error;
-    console.error('[Controller] uploadProfilePicture: Server error during profile picture upload:', err.message, err.stack);
+//   } catch (error: unknown) {
+//     const err = error as Error;
+//     console.error('[Controller] uploadProfilePicture: Server error during profile picture upload:', err.message, err.stack);
 
-    // If an error occurs after file upload but before DB save, try to delete the uploaded file
-    if (req.file) {
-      // newFileIdentifier holds the key/filename from the current upload attempt
-      await s3UploadMiddleware.deleteFile(newFileIdentifier);
-      console.log(`[Controller] uploadProfilePicture: Cleaned up file ${newFileIdentifier} after error.`);
-    }
-    return res.status(500).json({ message: 'Server error during profile picture upload.' });
-  }
-};
+//     // If an error occurs after file upload but before DB save, try to delete the uploaded file
+//     if (req.file) {
+//       // newFileIdentifier holds the key/filename from the current upload attempt
+//       await s3UploadMiddleware.deleteFile(newFileIdentifier);
+//       console.log(`[Controller] uploadProfilePicture: Cleaned up file ${newFileIdentifier} after error.`);
+//     }
+//     return res.status(500).json({ message: 'Server error during profile picture upload.' });
+//   }
+// };
 
 /**
  * @route   POST api/users/profile/cover // Or api/profile/cover based on your routes
  * @desc    Upload cover photo
  * @access  Private
  */
-export const uploadCoverPhoto = async (req: Request, res: Response): Promise<Response> => {
-  console.log('--- [Controller] uploadCoverPhoto: Entered ---');
+// export const uploadCoverPhoto = async (req: Request, res: Response): Promise<Response> => {
+//   console.log('--- [Controller] uploadCoverPhoto: Entered ---');
 
-  if (!req.user || !(req.user as any).id) {
-    console.error('[Controller] uploadCoverPhoto: Error - User not authenticated or ID missing.');
-    return res.status(401).json({ message: 'Not authorized. User ID missing.' });
-  }
-  const userId = (req.user as any).id;
+//   if (!req.user || !(req.user as any).id) {
+//     console.error('[Controller] uploadCoverPhoto: Error - User not authenticated or ID missing.');
+//     return res.status(401).json({ message: 'Not authorized. User ID missing.' });
+//   }
+//   const userId = (req.user as any).id;
 
-  if (!req.file) {
-    console.error('[Controller] uploadCoverPhoto: Error - No file uploaded.');
-    return res.status(400).json({ message: 'No file uploaded. Please select an image.' });
-  }
+//   if (!req.file) {
+//     console.error('[Controller] uploadCoverPhoto: Error - No file uploaded.');
+//     return res.status(400).json({ message: 'No file uploaded. Please select an image.' });
+//   }
 
-  const newFileIdentifier = (req as any).s3Key || req.file.filename;
+//   const newFileIdentifier = (req as any).s3Key || req.file.filename;
 
-  try {
-    const userToUpdate = await User.findById(userId);
+//   try {
+//     const userToUpdate = await User.findById(userId);
 
-    if (!userToUpdate) {
-      console.error(`[Controller] uploadCoverPhoto: Error - User not found with ID: ${userId}`);
-      await s3UploadMiddleware.deleteFile(newFileIdentifier);
-      return res.status(404).json({ message: 'User not found' });
-    }
-    const oldCoverPhotoIdentifier = userToUpdate.coverPhoto;
+//     if (!userToUpdate) {
+//       console.error(`[Controller] uploadCoverPhoto: Error - User not found with ID: ${userId}`);
+//       await s3UploadMiddleware.deleteFile(newFileIdentifier);
+//       return res.status(404).json({ message: 'User not found' });
+//     }
+//     const oldCoverPhotoIdentifier = userToUpdate.coverPhoto;
 
-    // Update user's coverPhoto field
-    userToUpdate.coverPhoto = newFileIdentifier;
+//     // Update user's coverPhoto field
+//     userToUpdate.coverPhoto = newFileIdentifier;
     
-    const savedUser = await userToUpdate.save();
+//     const savedUser = await userToUpdate.save();
 
-    // Verify the save worked by refetching
-    const verifyUser = await User.findById(userId);
+//     // Verify the save worked by refetching
+//     const verifyUser = await User.findById(userId);
 
-    // Clean up old file
-    if (oldCoverPhotoIdentifier && oldCoverPhotoIdentifier !== 'default-cover.png') {
-      await s3UploadMiddleware.deleteFile(oldCoverPhotoIdentifier);
-    }
+//     // Clean up old file
+//     if (oldCoverPhotoIdentifier && oldCoverPhotoIdentifier !== 'default-cover.png') {
+//       await s3UploadMiddleware.deleteFile(oldCoverPhotoIdentifier);
+//     }
 
-    const responseObj = {
-      message: 'Cover photo updated successfully',
-      coverPhoto: savedUser.coverPhoto,
-    };
+//     const responseObj = {
+//       message: 'Cover photo updated successfully',
+//       coverPhoto: savedUser.coverPhoto,
+//     };
 
-    return res.status(200).json(responseObj);
+//     return res.status(200).json(responseObj);
 
-  } catch (error: unknown) {
-    const err = error as Error;
-    console.error('[Controller] uploadCoverPhoto: Server error:', err.message, err.stack);
+//   } catch (error: unknown) {
+//     const err = error as Error;
+//     console.error('[Controller] uploadCoverPhoto: Server error:', err.message, err.stack);
     
-    if (req.file) {
-      await s3UploadMiddleware.deleteFile(newFileIdentifier);
-    }
-    return res.status(500).json({ message: 'Server error during cover photo upload.' });
-  }
-};
+//     if (req.file) {
+//       await s3UploadMiddleware.deleteFile(newFileIdentifier);
+//     }
+//     return res.status(500).json({ message: 'Server error during cover photo upload.' });
+//   }
+// };
 
 /**coverPhotoUrl
  * @route   GET api/users/friends
