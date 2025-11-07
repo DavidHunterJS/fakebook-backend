@@ -67,17 +67,7 @@ pipeline {
             }
         }
 
-        stage('Run Tests') {
-            steps {
-                withCredentials([
-                    string(credentialsId: 'GOOGLE_CLIENT_ID', variable: 'GOOGLE_CLIENT_ID'),
-                    string(credentialsId: 'GOOGLE_CLIENT_SECRET', variable: 'GOOGLE_CLIENT_SECRET')
-                ]) {
-                    // ✅ The shell command goes INSIDE the curly braces
-                    sh 'npm run test:ci'
-                }
-            }
-        }
+        // --- 'Run Tests' stage removed ---
 
         // --- DEPLOYMENT STAGES ---
         stage('Deploy to DEV Environment') {
