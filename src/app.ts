@@ -50,6 +50,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 const corsOptions: cors.CorsOptions = {
   origin: allowedOrigins,
   credentials: true,
+  exposedHeaders: ['Set-Cookie']
 };
 app.options('*', cors(corsOptions));
 app.use(cors(corsOptions));
