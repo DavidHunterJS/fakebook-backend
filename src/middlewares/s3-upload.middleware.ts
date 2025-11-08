@@ -9,6 +9,11 @@ if (!process.env.S3_BUCKET_NAME || !process.env.AWS_ACCESS_KEY_ID || !process.en
   throw new Error("FATAL ERROR: S3 environment variables are not defined. Please check your .env file.");
 }
 
+interface FileWithS3 extends Express.Multer.File {
+  s3Url?: string;
+  s3Key?: string;
+}
+
 // --- 2. S3 Client Setup (v3) ---
 const s3Client = new S3Client({
   region: process.env.AWS_REGION,
