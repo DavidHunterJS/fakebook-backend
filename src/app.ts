@@ -2,7 +2,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import connectDB from './config/db';
 import cors from 'cors';
-import path from 'path';
+// import path from 'path';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
@@ -17,16 +17,16 @@ import userRoutes from './routes/user.routes';
 // import postRoutes from './routes/post.routes';
 // import commentRoutes from './routes/comment.routes';
 // import friendRoutes from './routes/friend.routes';
-import notificationRoutes from './routes/notification.routes';
+// import notificationRoutes from './routes/notification.routes';
 import adminRoutes from './routes/admin.routes';
 import generationRoutes from './routes/generation.routes';
 import rewriteRoutes from './routes/rewrite.routes';
 import imagegenRouter from './routes/genimgage.routes';
 import uploadRoutes from './routes/upload.routes';
 // import followRoutes from './routes/follow.routes';
-import conversationRoutes from './routes/conversation.routes';
-import messageRoutes from './routes/message.routes';
-import chatUploadRoutes from './routes/chatUploads.routes';
+// import conversationRoutes from './routes/conversation.routes';
+// import messageRoutes from './routes/message.routes';
+// import chatUploadRoutes from './routes/chatUploads.routes';
 // import workflowRoutes from './routes/workflow.routes';
 import webhooksRouter from './routes/webhooks';
 import subscriptionRoutes from './routes/subscriptions';
@@ -43,16 +43,34 @@ if (isProduction) {
   app.set('trust proxy', 1);
 }
 
+// 1. Read and split your origins array
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
   : ['http://localhost:3000'];
 
+// 2. Add a log so you can check this in 'heroku logs'
+console.log('✅ [CORS] Allowed Origins:', allowedOrigins);
+
+// 3. Use this function-based config for more robust checking
 const corsOptions: cors.CorsOptions = {
-  origin: allowedOrigins,
+  origin: function (origin, callback) {
+    // 'origin' is the domain making the request (e.g., https://compliancekit.app)
+
+    // Check if the incoming 'origin' is in your array
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      // If it's in the array (or it's not a browser request), allow it
+      callback(null, true);
+    } else {
+      // Otherwise, block it and log the failure
+      console.error(`❌ [CORS] Blocked origin: ${origin}`);
+      callback(new Error('CORS policy: This origin is not allowed.'));
+    }
+  },
   credentials: true,
-  exposedHeaders: ['Set-Cookie']
+  exposedHeaders: ['Set-Cookie'] // This is correct and necessary for login
 };
-app.options('*', cors(corsOptions));
+
+app.options('*', cors(corsOptions)); // Handle preflight requests
 app.use(cors(corsOptions));
 
 // ✅ Redis setup for production
