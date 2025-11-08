@@ -43,34 +43,16 @@ if (isProduction) {
   app.set('trust proxy', 1);
 }
 
-// 1. Read and split your origins array
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
   : ['http://localhost:3000'];
 
-// 2. Add a log so you can check this in 'heroku logs'
-console.log('✅ [CORS] Allowed Origins:', allowedOrigins);
-
-// 3. Use this function-based config for more robust checking
 const corsOptions: cors.CorsOptions = {
-  origin: function (origin, callback) {
-    // 'origin' is the domain making the request (e.g., https://compliancekit.app)
-
-    // Check if the incoming 'origin' is in your array
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      // If it's in the array (or it's not a browser request), allow it
-      callback(null, true);
-    } else {
-      // Otherwise, block it and log the failure
-      console.error(`❌ [CORS] Blocked origin: ${origin}`);
-      callback(new Error('CORS policy: This origin is not allowed.'));
-    }
-  },
+  origin: allowedOrigins,
   credentials: true,
-  exposedHeaders: ['Set-Cookie'] // This is correct and necessary for login
+  exposedHeaders: ['Set-Cookie']
 };
-
-app.options('*', cors(corsOptions)); // Handle preflight requests
+app.options('*', cors(corsOptions));
 app.use(cors(corsOptions));
 
 // ✅ Redis setup for production
