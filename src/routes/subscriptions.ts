@@ -11,11 +11,10 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-09-30.clover',
 });
 
-// Create Stripe Checkout Session
+// Create Stripe Checkout Session OR Portal Session
 router.post('/create-checkout-session', requireAuth, async (req: Request, res: Response) => {
   try {
     const { tier } = req.body; // 'Basic' or 'Pro'
-    
     const userId = req.user!._id;
     const user = await User.findById(userId);
     
@@ -23,12 +22,24 @@ router.post('/create-checkout-session', requireAuth, async (req: Request, res: R
       return res.status(404).json({ error: 'User not found' });
     }
 
-    if (user.subscription.tier !== 'Free') {
-      return res.status(400).json({ 
-        error: 'User already has an active subscription. Please cancel current subscription first.' 
+    // --- (START) THIS IS THE NEW LOGIC ---
+
+    // CHECK 1: Does the user have an active subscription?
+    if (user.subscription.tier !== 'Free' && user.stripeCustomerId) {
+      // YES. User has an active sub. Send them to the Billing Portal.
+      console.log(`✅ User ${userId} has an active sub. Creating Billing Portal session.`);
+      
+      const portalSession = await stripe.billingPortal.sessions.create({
+        customer: user.stripeCustomerId,
+        // Send them to your main page after
+        return_url: `${process.env.CLIENT_URL}/`, 
       });
+
+      // Send back the portal URL to redirect
+      return res.json({ url: portalSession.url });
     }
-    
+
+    // CHECK 2: User is on 'Free' tier. Proceed with new checkout.
     const priceId = tier === 'Basic' 
       ? process.env.STRIPE_BASIC_PRICE_ID 
       : process.env.STRIPE_PRO_PRICE_ID;
@@ -37,7 +48,8 @@ router.post('/create-checkout-session', requireAuth, async (req: Request, res: R
       return res.status(500).json({ error: 'Price ID not configured' });
     }
 
-    const session = await stripe.checkout.sessions.create({
+    // Prepare session options
+    const sessionOptions: Stripe.Checkout.SessionCreateParams = {
       payment_method_types: ['card'],
       mode: 'subscription',
       line_items: [{
@@ -46,12 +58,23 @@ router.post('/create-checkout-session', requireAuth, async (req: Request, res: R
       }],
       success_url: `${process.env.CLIENT_URL}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/subscription/cancel`,
-      customer_email: user.email,
       metadata: {
         userId: userId.toString(),
         tier,
       },
-    });
+    };
+
+    // This is key: Use the Customer ID if it exists, otherwise use the email.
+    // This prevents duplicate customers in Stripe.
+    if (user.stripeCustomerId) {
+      sessionOptions.customer = user.stripeCustomerId;
+    } else {
+      sessionOptions.customer_email = user.email;
+    }
+
+    // --- (END) NEW LOGIC ---
+
+    const session = await stripe.checkout.sessions.create(sessionOptions);
 
     console.log(`✅ Checkout session created for user ${userId}: ${session.id}`);
     res.json({ sessionId: session.id, url: session.url });
@@ -60,6 +83,8 @@ router.post('/create-checkout-session', requireAuth, async (req: Request, res: R
     res.status(500).json({ error: error.message });
   }
 });
+
+// ... (the rest of your file /status, /cancel, /reactivate remains the same) ...
 
 // Get current subscription status and available credits
 router.get('/status', requireAuth, async (req: Request, res: Response) => {
