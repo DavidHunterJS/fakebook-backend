@@ -2,9 +2,7 @@ import { Request, Response } from 'express';
 import Stripe from 'stripe';
 import  verifyToken  from '../middlewares/auth.middleware'; // Your auth middleware
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-09-30.clover',
-});
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 export const createCheckoutSession = async (req: Request, res: Response) => {
   try {
