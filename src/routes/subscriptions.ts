@@ -60,6 +60,7 @@ router.post('/create-checkout-session', requireAuth, async (req: Request, res: R
         userId: userId.toString(),
         tier,
       },
+      allow_promotion_codes: true,
     };
 
     // This is key: Use the Customer ID if it exists, otherwise use the email.
