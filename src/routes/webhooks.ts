@@ -15,7 +15,7 @@ interface InvoiceWithSubscription extends Stripe.Invoice {
   subscription: string | Stripe.Subscription | null;
 }
 
-router.post('/stripe', express.raw({ type: 'application/json' }), async (req: Request, res: Response) => {
+router.post('/', express.raw({ type: 'application/json' }), async (req: Request, res: Response) => {
   console.log("--- STRIPE WEBHOOK ENDPOINT HIT ---"); 
   const sig = req.headers['stripe-signature'] as string;
   const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET!;
