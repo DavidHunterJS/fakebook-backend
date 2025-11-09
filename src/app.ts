@@ -168,6 +168,7 @@ app.use('/api/upload', uploadRoutes);
 // app.use('/api/chat', chatUploadRoutes);
 // app.use('/api/workflow', workflowRoutes);
 app.use('/api/subscription', subscriptionRoutes); // ✅ Subscription routes
+app.use('/api/webhooks', webhooksRouter); // Stripe Webhooks route
 
 // --- 404 and Error Handlers ---
 app.use('*', (req, res) => {
