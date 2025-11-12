@@ -31,57 +31,121 @@ router.post('/fix-image', authenticateUser, async (req, res) => {
     }
 
     // 2. CORE LOGIC
-    const { cutoutImageUrl, fixesToApply, dimensions } = req.body;
+    const { originalImageUrl, maskUrl, fixesToApply, dimensions } = req.body;
 
-    if (!cutoutImageUrl || !fixesToApply || !dimensions) {
-      return res.status(400).json({ error: 'cutoutImageUrl, fixesToApply, and dimensions are required' });
+    if (!originalImageUrl || !maskUrl || !fixesToApply || !dimensions) {
+      return res.status(400).json({ error: 'originalImageUrl, maskUrl, fixesToApply, and dimensions are required' });
     }
 
-    const cutoutResponse = await fetch(cutoutImageUrl);
-    const cutoutBuffer = Buffer.from(await cutoutResponse.arrayBuffer());
+    const originalResponse = await fetch(originalImageUrl);
+    const originalBuffer = Buffer.from(await originalResponse.arrayBuffer());
 
-    let imageProcessor = sharp(cutoutBuffer);
+    const maskResponse = await fetch(maskUrl);
+    const productMaskBuffer = Buffer.from(await maskResponse.arrayBuffer());
 
+    // --- 3. APPLY FIXES (RELIABLE "COMPOSITE ONTO WHITE" METHOD) ---
+    
+    let imageProcessor;
+    const { width, height } = dimensions; 
+
+    if (fixesToApply.includes('background')) {
+      console.log('Applying white background using "composite onto white" method...');
+      
+      // 3a. Create the pure white canvas
+      console.log(`[FIXER] Creating white background [${width}x${height}]...`);
+      const whiteBackground = sharp({
+        create: { width, height, channels: 3, background: { r: 255, g: 255, b: 255 } }
+      });
+
+      // 3b. Process the product mask
+      console.log(`[FIXER] Processing mask [${width}x${height}]...`);
+      // BiRefNet mask is (product=black, background=white).
+      // We need (product=white, background=black) for the alpha channel.
+      const alphaMask = await sharp(productMaskBuffer)
+        .resize(width, height)
+        .toColourspace('b-w') // Ensure it's grayscale
+        .raw() // ⭐ CRITICAL: Extract as raw pixel data, not PNG
+        .toBuffer();
+      console.log('[FIXER] Mask processed and INVERTED.');
+
+      // 3c. Create the product "sticker"
+      console.log(`[FIXER] Creating product sticker [${width}x${height}]...`);
+      // First, get the resized original as RGB (no alpha)
+      const resizedProductRgb = await sharp(originalBuffer)
+        .resize(width, height)
+        .removeAlpha()
+        .toColourspace('srgb')
+        .raw() // Get raw RGB data
+        .toBuffer();
+
+      // Now create RGBA by combining RGB + Alpha mask
+      const productCutout = await sharp(resizedProductRgb, {
+        raw: {
+          width: width,
+          height: height,
+          channels: 3 // RGB input
+        }
+      })
+      .joinChannel(alphaMask, { 
+        raw: { 
+          width: width, 
+          height: height, 
+          channels: 1 // Single channel mask
+        } 
+      })
+      .png()
+      .toBuffer();
+      console.log('[FIXER] Product sticker created.');
+
+      // 3d. Composite the product "sticker" ONTO the white background
+      console.log('[FIXER] Compositing sticker...');
+      imageProcessor = whiteBackground.composite([
+        {
+          input: productCutout, 
+          blend: 'over',
+        },
+      ]);
+      console.log('[FIXER] Composite operation set up.');
+    } else {
+      imageProcessor = sharp(originalBuffer);
+    }
+
+    // 4. APPLY RESIZE (if needed)
     if (fixesToApply.includes('resize') && dimensions.longestSide < 1600) {
-      console.log(`Resizing image from ${dimensions.longestSide}px to 1600px...`);
+      console.log(`[FIXER] Resizing image...`);
       imageProcessor = imageProcessor.resize({
         width: 1600,
         height: 1600,
         fit: 'inside',
         withoutEnlargement: true,
       });
+      console.log(`[FIXER] Resize operation set up.`);
     }
 
-    if (fixesToApply.includes('background')) {
-      console.log('Applying white background...');
-      imageProcessor = imageProcessor.flatten({ background: { r: 255, g: 255, b: 255 } });
-    }
-
+    // 5. GET FINAL IMAGE
+    console.log('[FIXER] Generating final JPEG buffer...');
     const finalImageBuffer = await imageProcessor.jpeg().toBuffer();
+    console.log('[FIXER] Final buffer created.');
     
-    // --- 4. S3 UPLOAD ---
+    // ... (Steps 6, 7, and 8 are correct)
+    
+    // 6. S3 UPLOAD
     const filename = `fixed-images/${Date.now()}-fully-fixed.jpg`;
-    
     const putFixedImageCommand = new PutObjectCommand({
-      Bucket: BUCKET_NAME,
-      Key: filename,
-      Body: finalImageBuffer,
-      ContentType: 'image/jpeg',
-      ACL: 'public-read',
+        Bucket: BUCKET_NAME,
+        Key: filename,
+        Body: finalImageBuffer,
+        ContentType: 'image/jpeg',
+        ACL: 'public-read',
     });
-
     await s3.send(putFixedImageCommand);
-
-    // 👇 --- THIS IS THE FIX ---
-    // Use path-style URL format because our bucket name has dots.
     const region = process.env.AWS_REGION || 'us-east-1';
     const fixedUrl = `https://s3.${region}.amazonaws.com/${BUCKET_NAME}/${filename}`;
     
-    // 5. BOOKKEEPER
+    // 7. BOOKKEEPER
     await deductCredit(userId, 'fix');
-    console.log(`Successfully deducted 1 'fix' credit from user ${userId}`);
-
-    // 6. SEND RESPONSE
+    
+    // 8. SEND RESPONSE
     return res.status(200).json({ fixedUrl });
 
   } catch (error) {
